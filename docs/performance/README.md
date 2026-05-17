@@ -22,19 +22,21 @@ matches the mode to current hardware.
 
 ## Files
 
-| File | Installs to |
+Installable assets live in `../../files/` and are deployed by `../../perf_runner.py`.
+
+| Source | Installs to |
 |---|---|
-| `egpu-prime-switch` | `/usr/local/sbin/egpu-prime-switch` |
-| `egpu-prime.service` | `/etc/systemd/system/egpu-prime.service` |
-| `install-egpu-prime.sh` | (run from this directory) |
+| `../../files/egpu-prime-switch` | `/usr/local/sbin/egpu-prime-switch` |
+| `../../files/egpu-prime.service` | `/etc/systemd/system/egpu-prime.service` |
 
 ## Install
 
 ```bash
-sudo ./install-egpu-prime.sh
+sudo ../../perf_runner.py
 ```
 
-Dry-run the logic without rebooting:
+Idempotent — re-run after editing `../../perf.toml`. Dry-run the boot logic
+without rebooting:
 
 ```bash
 sudo systemctl start egpu-prime.service

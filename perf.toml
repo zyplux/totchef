@@ -1,0 +1,27 @@
+# perf.toml — Brave GPU flags + env, applied by perf_runner.py to a per-user
+# .desktop override. Re-running only rewrites files whose contents would change.
+
+[brave]
+env = { LIBVA_DRIVER_NAME = "nvidia", NVD_BACKEND = "direct" }
+
+# brave://flags entries synced via Local State for UI visibility.
+# Format: <id>@<option-index>; @1 = Enabled for binary feature flags.
+local_state_flags = [
+    "enable-vulkan@1",
+    "default-angle-vulkan@1",
+    "vulkan-from-angle@1",
+    # "enable-unsafe-webgpu@1",
+]
+
+# Each `--<id>` switch on the Exec= line (distinct from features below).
+switches = [
+    # "enable-unsafe-webgpu",  # WebGPU on Linux+NVIDIA; experimental, may crash GPU process.
+]
+
+# Joined into one --enable-features=A,B,C arg per group. Comment out a group to disable.
+[brave.features]
+video_decode = ["VaapiOnNvidiaGPUs", "AcceleratedVideoDecodeLinuxGL", "AcceleratedVideoDecodeLinuxZeroCopyGL", "VaapiIgnoreDriverChecks"]
+video_encode = ["AcceleratedVideoEncoder"]
+pipewire     = ["WebRTCPipeWireCapturer"]
+wayland_sync = ["WaylandLinuxDrmSyncobj"]
+vulkan       = ["Vulkan", "DefaultANGLEVulkan", "VulkanFromANGLE"]
