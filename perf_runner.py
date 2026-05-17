@@ -121,9 +121,12 @@ def rewrite_exec_line(
             i += 1
         tokens = tokens[i:]
 
-    managed_switches = {f"--{s}" for s in switches}
+    # Switches may be bare ("enable-foo") or key=value ("render-node-override=/x"); dedupe
+    # by key so a value change in perf.toml replaces the old token instead of duplicating.
+    managed_keys = {f"--{s.split('=', 1)[0]}" for s in switches}
     tokens = [t for t in tokens
-              if not t.startswith("--enable-features=") and t not in managed_switches]
+              if not t.startswith("--enable-features=")
+              and not any(t == k or t.startswith(k + "=") for k in managed_keys)]
 
     insert_at = next(
         (i for i, t in enumerate(tokens) if len(t) == 2 and t.startswith("%")),
