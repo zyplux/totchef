@@ -24,7 +24,7 @@ fires in `__jump_label_patch`. A boot-time WARN from
 detection is set to crash on kernel-side splits — both make the system
 less tolerant of any follow-on patching anomaly.
 
-## Fixes applied (via `gpu_config.py`)
+## Fixes applied (via `run_gpu_conf.py`)
 
 1. Suspend switched from `s2idle` to deep S3:
    - `mem_sleep_default=deep` appended to `GRUB_CMDLINE_LINUX_DEFAULT`

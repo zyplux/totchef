@@ -4,16 +4,13 @@
 # dependencies = ["loguru>=0.7"]
 # ///
 """
-apps_performance_config.py — idempotent per-app Chromium/Electron config from perf.toml.
+Idempotent per-app Chromium/Electron config from perf.toml.
 
 For each section with `desktop = "..."`: writes a per-user .desktop
 override with env prefix + --enable-features + --<switch>es. Optionally
 patches a Chromium-family `Local State` (for brave://flags-style UI
 mirroring) and/or merges an Electron-style `argv.json` (for VS Code's
 allowlisted Chromium flags).
-
-GPU driver packages live in apt.toml (run apt_runner.py first); the
-egpu-prime boot service is installed by gpu_config.py.
 """
 
 import json
@@ -94,7 +91,7 @@ def write_desktop_override(
     if not system_desktop.exists():
         logger.warning(
             f"{system_desktop} not found; skipping .desktop override "
-            "(install package via apt_runner.py first)"
+            "(install package via run_apt.py first)"
         )
         return
 
@@ -150,7 +147,7 @@ def patch_chromium_local_state(
             f"{process_name} is running; skipping Local State patch (would race the write)."
         )
         logger.warning(
-            f"Quit {process_name} and re-run apps_performance_config.py to sync flag UI state."
+            f"Quit {process_name} and re-run run_apps_conf.py to sync flag UI state."
         )
         return
 

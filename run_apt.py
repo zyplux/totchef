@@ -4,7 +4,7 @@
 # dependencies = ["loguru>=0.7", "toon-format>=0.9.0b1"]
 # ///
 """
-apt_runner.py — declarative apt state: repos, keys, pinning, full-upgrade,
+Idempotent declarative apt state: repos, keys, pinning, full-upgrade,
 package install, autoremove. Idempotent; same script for first-run
 bootstrap and ongoing daily-driver maintenance. Actions run through nala
 (parallel downloads + `nala history undo` for rollback); nala is
@@ -84,9 +84,17 @@ def print_toon(rows: list[dict], note: str = "") -> None:
 def install_prereqs() -> None:
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run("apt-get", "update", note="Refreshing apt cache")
-    run("apt-get", "install", "-y", "--no-install-recommends",
-        "curl", "gnupg", "ca-certificates", "nala",
-        note="Installing prerequisites")
+    run(
+        "apt-get",
+        "install",
+        "-y",
+        "--no-install-recommends",
+        "curl",
+        "gnupg",
+        "ca-certificates",
+        "nala",
+        note="Installing prerequisites",
+    )
 
 
 def write_file(path: Path, content: str, note: str = "") -> None:
@@ -129,8 +137,13 @@ def policy_row(pkg: str) -> dict:
             matching = len(tokens) >= 2 and tokens[0] == candidate
             if matching:
                 priority = int(tokens[1])
-    return {"package": pkg, "installed": field("Installed"), "candidate": candidate,
-            "priority": priority, "source": source}
+    return {
+        "package": pkg,
+        "installed": field("Installed"),
+        "candidate": candidate,
+        "priority": priority,
+        "source": source,
+    }
 
 
 def setup_log_tee() -> Path:
@@ -221,7 +234,9 @@ def main() -> None:
 
     log_file = setup_log_tee()
     logger.info(f"Logging this run to {log_file}")
-    logger.info(f"Loaded config from {APT_TOML} ({len(repos)} repo(s), {len(packages)} package(s))")
+    logger.info(
+        f"Loaded config from {APT_TOML} ({len(repos)} repo(s), {len(packages)} package(s))"
+    )
 
     release = detect_release()
     logger.info(f"Detected release codename: {release}")
@@ -262,14 +277,26 @@ def main() -> None:
 
     nala("full-upgrade", "-y", note="Running nala full-upgrade")
 
-    run("lsattr", "-d", str(TRUSTED_GPGD), note=f"{TRUSTED_GPGD} attributes (expect 'i' set):")
+    run(
+        "lsattr",
+        "-d",
+        str(TRUSTED_GPGD),
+        note=f"{TRUSTED_GPGD} attributes (expect 'i' set):",
+    )
 
     if packages:
-        nala("install", "-y", *packages, note=f"Installing packages: {' '.join(packages)}")
+        nala(
+            "install",
+            "-y",
+            *packages,
+            note=f"Installing packages: {' '.join(packages)}",
+        )
 
     nala("autoremove", "-y", note="Removing unused packages with nala autoremove")
 
-    logger.info(f"Done. Configured {len(repos)} repo(s) and {len(packages)} package(s).")
+    logger.info(
+        f"Done. Configured {len(repos)} repo(s) and {len(packages)} package(s)."
+    )
     logger.info("Edit apt.toml to manage repos and the package list, then re-run.")
     logger.info(
         f"{TRUSTED_GPGD} is now immutable. Apt/dpkg operations unlock it automatically "

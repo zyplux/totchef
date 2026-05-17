@@ -8,9 +8,9 @@ ongoing upkeep.
 ## One-time setup
 
 ```bash
-sudo ./apt_runner.py                  # repos, keys, pin priorities, full-upgrade, packages
-sudo ./gpu_config.py                  # egpu-prime.service (boot-time prime-select)
-sudo ./apps_performance_config.py     # Brave/Code Insiders launcher + flag overrides
+sudo ./run_apt.py                     # repos, keys, pin priorities, full-upgrade, packages
+sudo ./run_gpu_conf.py                # egpu-prime.service (boot-time prime-select)
+sudo ./run_apps_conf.py               # Brave/Code Insiders launcher + flag overrides
 sudo reboot
 ```
 
@@ -27,8 +27,8 @@ No manual commands.
 | `files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
 | `logs/` | timestamped per-run log (chowned to invoking user) |
 
-Edit a TOML, re-run the matching script (`apt_runner.py` for `apt.toml`,
-`apps_performance_config.py` for `perf.toml`; `gpu_config.py` takes no config).
+Edit a TOML, re-run the matching script (`run_apt.py` for `apt.toml`,
+`run_apps_conf.py` for `perf.toml`; `run_gpu_conf.py` takes no config).
 All scripts only rewrite files whose contents would actually change, so idle
 re-runs are cheap.
 

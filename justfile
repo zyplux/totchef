@@ -1,4 +1,4 @@
 up:
-    ./apt_runner.py
-    ./gpu_config.py
-    ./apps_performance_config.py
+    ./run_apt.py
+    ./run_gpu_conf.py
+    ./run_apps_conf.py

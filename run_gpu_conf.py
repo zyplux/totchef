@@ -4,7 +4,7 @@
 # dependencies = ["loguru>=0.7", "toon-format>=0.9.0b1"]
 # ///
 """
-gpu_config.py — idempotent egpu-prime boot service install + GPU state probe.
+Idempotent egpu-prime boot service install + GPU state probe.
 
 Installs /usr/local/sbin/egpu-prime-switch and /etc/systemd/system/
 egpu-prime.service, then enables the service. The service runs once at
@@ -16,7 +16,7 @@ Also configures suspend behavior to avoid s2idle-related kernel oopses on
 this Tiger Lake + NVIDIA hybrid setup (see docs/investigations/sleep-crash.md):
 forces deep S3 via GRUB cmdline and pins NVIDIA power-management options.
 
-NVIDIA driver packages live in apt.toml; run apt_runner.py first.
+NVIDIA driver packages live in apt.toml; run run_apt.py first.
 """
 
 import os

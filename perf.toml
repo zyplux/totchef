@@ -1,7 +1,7 @@
-# perf.toml — config for apps_performance_config.py. Top-level [env] is shared;
+# perf.toml — config for run_apps_conf.py. Top-level [env] is shared;
 # each app is its own [<app>] table identified by a `desktop` key, optionally
 # with local_state(+_flags) for Chromium Local State or argv_json(+argv) for
-# Electron. (gpu_config.py installs the egpu-prime boot service and reads no
+# Electron. (run_gpu_conf.py installs the egpu-prime boot service and reads no
 # config here — its inputs are static assets in files/.)
 
 # Per-app [<app>.env] overrides or extends.
