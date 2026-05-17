@@ -1,14 +1,15 @@
 # sys-conf-py
 
 Declarative Ubuntu/Kubuntu Wayland laptop config: apt repos + packages, eGPU
-auto-PRIME at boot, and Brave GPU-acceleration flags. PEP 723 single-file
-scripts; re-runnable; same script for first-run bootstrap and ongoing upkeep.
+auto-PRIME at boot, and Brave + VS Code Insiders GPU-acceleration flags. PEP
+723 single-file scripts; re-runnable; same script for first-run bootstrap and
+ongoing upkeep.
 
 ## One-time setup
 
 ```bash
 sudo ./apt_runner.py    # repos, keys, pin priorities, full-upgrade, packages
-sudo ./perf_runner.py   # egpu-prime.service + Brave .desktop override
+sudo ./perf_runner.py   # egpu-prime.service + Brave/Code Insiders launcher overrides
 sudo reboot
 ```
 
@@ -21,7 +22,7 @@ No manual commands.
 | File | Purpose |
 |---|---|
 | `apt.toml` | repos, packages, pin priorities |
-| `perf.toml` | Brave env vars + `--enable-features` groups + `brave://flags` UI sync |
+| `perf.toml` | Shared `[env]`; one section per app (`desktop` path + flags via `features`/`switches`/`local_state_flags`/`argv` as appropriate) |
 | `files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
 | `logs/` | timestamped per-run log (chowned to invoking user) |
 
@@ -52,6 +53,8 @@ H.264/VP9/AV1 decode profiles.
 sudo systemctl disable --now egpu-prime.service
 sudo rm /etc/systemd/system/egpu-prime.service /usr/local/sbin/egpu-prime-switch
 
-# Brave flag override (back to system defaults)
+# Brave / Code Insiders flag overrides (back to system defaults)
 rm ~/.local/share/applications/brave-browser.desktop
+rm ~/.local/share/applications/code-insiders.desktop
+# argv.json: open and manually remove the keys you don't want; the file is JSON
 ```

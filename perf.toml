@@ -1,15 +1,26 @@
-# perf.toml — Brave GPU flags + env, applied by perf_runner.py to a per-user
-# .desktop override. Re-running only rewrites files whose contents would change.
+# perf.toml — declarative per-app GPU performance config for perf_runner.py.
+#
+# Top-level [env] is shared by all apps. Each app gets its own [<app>] section
+# identified by the presence of a `desktop = "..."` key; perf_runner.py iterates
+# anything matching that shape and dispatches generic writers based on which
+# other keys it carries (local_state + local_state_flags for Chromium-family
+# Local State; argv_json + argv for Electron-style argv.json).
+#
+# Re-running only rewrites files whose contents would change.
+
+# Per-app [<app>.env] overrides or extends this. Inline form also accepted:
+# `env = { LIBVA_DRIVER_NAME = "iHD" }` inside a [<app>] section.
+[env]
+LIBVA_DRIVER_NAME = "nvidia"
+NVD_BACKEND       = "direct"
 
 [brave]
-env = { LIBVA_DRIVER_NAME = "nvidia", NVD_BACKEND = "direct" }
+desktop     = "/usr/share/applications/brave-browser.desktop"
+local_state = ".config/BraveSoftware/Brave-Browser/Local State"
 
 # brave://flags entries synced via Local State for UI visibility.
 # Format: <id>@<option-index>; @1 = Enabled for binary feature flags.
 local_state_flags = [
-    "enable-vulkan@1",
-    "default-angle-vulkan@1",
-    "vulkan-from-angle@1",
     # "enable-unsafe-webgpu@1",
 ]
 
@@ -19,9 +30,25 @@ switches = [
 ]
 
 # Joined into one --enable-features=A,B,C arg per group. Comment out a group to disable.
+# Vulkan UI compositor (Vulkan, DefaultANGLEVulkan, VulkanFromANGLE) is NOT compatible
+# with --ozone-platform=wayland in Chromium <=148: wayland_surface_factory.cc rejects it
+# and the GPU process fails to create a surface, so no window appears. Re-enable only when
+# Chromium ships Vulkan-on-Wayland-Ozone support.
 [brave.features]
 video_decode = ["VaapiOnNvidiaGPUs", "AcceleratedVideoDecodeLinuxGL", "AcceleratedVideoDecodeLinuxZeroCopyGL", "VaapiIgnoreDriverChecks"]
 video_encode = ["AcceleratedVideoEncoder"]
 pipewire     = ["WebRTCPipeWireCapturer"]
 wayland_sync = ["WaylandLinuxDrmSyncobj"]
-vulkan       = ["Vulkan", "DefaultANGLEVulkan", "VulkanFromANGLE"]
+
+[code_insiders]
+desktop   = "/usr/share/applications/code-insiders.desktop"
+argv_json = ".vscode-insiders/argv.json"
+
+# argv.json keys go through VS Code's hardcoded allowlist. Anything not in
+# that allowlist is silently dropped, so additions here need to match a key
+# VS Code's main process actually forwards to Electron.
+[code_insiders.argv]
+"ozone-platform-hint"     = "auto"
+"enable-gpu-rasterization" = true
+"ignore-gpu-blocklist"    = true
+"enable-features"         = "VaapiOnNvidiaGPUs,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiIgnoreDriverChecks,WaylandLinuxDrmSyncobj"

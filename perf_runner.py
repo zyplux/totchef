@@ -6,8 +6,15 @@
 """
 perf_runner.py — idempotent GPU performance config from perf.toml.
 
-Stages: egpu-prime boot service, Brave .desktop launcher override, Brave Local
-State sync. Driver packages live in apt.toml; run apt_runner.py first.
+Stages:
+  1. egpu-prime boot service (system-wide, requires sudo).
+  2. For each per-app section (anything with `desktop = "..."`): write a
+     per-user .desktop override with env prefix + --enable-features +
+     --<switch>es. Optionally patch a Chromium-family `Local State` (for
+     brave://flags-style UI mirroring) and/or merge an Electron-style
+     `argv.json` (for VS Code's allowlisted Chromium flags).
+
+Driver packages live in apt.toml; run apt_runner.py first.
 """
 
 import json
@@ -31,9 +38,6 @@ EGPU_SWITCH_SRC = FILES_DIR / "egpu-prime-switch"
 EGPU_SERVICE_SRC = FILES_DIR / "egpu-prime.service"
 EGPU_SWITCH_DST = Path("/usr/local/sbin/egpu-prime-switch")
 EGPU_SERVICE_DST = Path("/etc/systemd/system/egpu-prime.service")
-
-SYSTEM_BRAVE_DESKTOP = Path("/usr/share/applications/brave-browser.desktop")
-BRAVE_LOCAL_STATE_REL = Path(".config/BraveSoftware/Brave-Browser/Local State")
 
 LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {level: <7} {message}"
 
@@ -137,19 +141,24 @@ def rewrite_exec_line(
     return " ".join(tokens)
 
 
-def write_brave_desktop(brave_cfg: dict, uid: int, gid: int, home: Path) -> None:
-    if not SYSTEM_BRAVE_DESKTOP.exists():
-        logger.warning(f"{SYSTEM_BRAVE_DESKTOP} not found; skipping Brave .desktop "
-                       "(install brave-browser via apt_runner.py first)")
+def write_desktop_override(
+    system_desktop: Path,
+    env: dict[str, str],
+    features: list[str],
+    switches: list[str],
+    uid: int, gid: int, home: Path,
+) -> None:
+    """Per-user .desktop override: copy system .desktop, rewrite each Exec= line
+    with env prefix + --<switch>es + --enable-features, write to ~/.local/share/
+    applications/ chowned to the invoking user. Idempotent."""
+    if not system_desktop.exists():
+        logger.warning(f"{system_desktop} not found; skipping .desktop override "
+                       "(install package via apt_runner.py first)")
         return
-
-    env = brave_cfg.get("env", {})
-    features = [f for group in brave_cfg.get("features", {}).values() for f in group]
-    switches = brave_cfg.get("switches", [])
 
     new_lines = []
     rewritten = 0
-    for line in SYSTEM_BRAVE_DESKTOP.read_text().splitlines():
+    for line in system_desktop.read_text().splitlines():
         if line.startswith("Exec="):
             new_lines.append("Exec=" + rewrite_exec_line(line[5:], env, features, switches))
             rewritten += 1
@@ -158,7 +167,7 @@ def write_brave_desktop(brave_cfg: dict, uid: int, gid: int, home: Path) -> None
     new_text = "\n".join(new_lines) + "\n"
 
     dst_dir = home / ".local/share/applications"
-    dst = dst_dir / SYSTEM_BRAVE_DESKTOP.name
+    dst = dst_dir / system_desktop.name
     dst_dir.mkdir(parents=True, exist_ok=True)
     os.chown(dst_dir, uid, gid)
 
@@ -171,20 +180,25 @@ def write_brave_desktop(brave_cfg: dict, uid: int, gid: int, home: Path) -> None
         dst.chmod(0o644)
 
 
-def patch_brave_local_state(brave_cfg: dict, uid: int, gid: int, home: Path) -> None:
-    flags = brave_cfg.get("local_state_flags", [])
+def patch_chromium_local_state(
+    local_state: Path,
+    flags: list[str],
+    process_name: str,
+    uid: int,
+    gid: int,
+) -> None:
+    """Add `flags` to browser.enabled_labs_experiments in a Chromium-family Local
+    State JSON. Skips if the browser is currently running (would race the write)."""
     if not flags:
         return
-
-    local_state = home / BRAVE_LOCAL_STATE_REL
     if not local_state.exists():
         logger.warning(f"{local_state} not found; skipping Local State patch "
-                       "(launch Brave once, then re-run)")
+                       f"(launch {process_name} once, then re-run)")
         return
 
-    if subprocess.run(["pgrep", "-x", "brave"], capture_output=True).returncode == 0:
-        logger.warning("Brave is running; skipping Local State patch (would race the write).")
-        logger.warning("Quit Brave and re-run perf_runner.py to sync brave://flags UI state.")
+    if subprocess.run(["pgrep", "-x", process_name], capture_output=True).returncode == 0:
+        logger.warning(f"{process_name} is running; skipping Local State patch (would race the write).")
+        logger.warning(f"Quit {process_name} and re-run perf_runner.py to sync flag UI state.")
         return
 
     data = json.loads(local_state.read_text())
@@ -192,13 +206,39 @@ def patch_brave_local_state(brave_cfg: dict, uid: int, gid: int, home: Path) -> 
     before = set(experiments)
     after = before | set(flags)
     if after == before:
-        logger.info(f"Local State already has all {len(flags)} brave://flags entries")
+        logger.info(f"Local State already has all {len(flags)} flag entries")
         return
 
     data["browser"]["enabled_labs_experiments"] = sorted(after)
     local_state.write_text(json.dumps(data, indent=2))
     os.chown(local_state, uid, gid)
     logger.info(f"Local State: added {sorted(after - before)}")
+
+
+def merge_electron_argv_json(path: Path, keys: dict, uid: int, gid: int) -> None:
+    """Merge `keys` into an Electron-style argv.json, preserving any other keys
+    the user added (e.g. crash-reporter-id). VS Code ships the default file full
+    of // comments — those get stripped on first managed write."""
+    if not keys:
+        return
+    existing: dict = {}
+    if path.exists():
+        no_comments = "\n".join(
+            ln for ln in path.read_text().splitlines() if not ln.lstrip().startswith("//")
+        )
+        if no_comments.strip():
+            existing = json.loads(no_comments)
+    merged = {**existing, **keys}
+    new_text = json.dumps(merged, indent=2) + "\n"
+
+    if path.exists() and path.read_text() == new_text:
+        logger.info(f"Unchanged: {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new_text)
+    os.chown(path.parent, uid, gid)
+    os.chown(path, uid, gid)
+    logger.info(f"Writing  : {path}  (argv keys merged: {sorted(keys)})")
 
 
 def gpu_state_row() -> dict:
@@ -239,12 +279,32 @@ def main() -> None:
 
     install_egpu_prime()
 
-    brave_cfg = config.get("brave", {})
-    if brave_cfg:
-        write_brave_desktop(brave_cfg, uid, gid, home)
-        patch_brave_local_state(brave_cfg, uid, gid, home)
-    else:
-        logger.info("No [brave] section in perf.toml; skipping Brave config")
+    # Per-app sections are identified by having a `desktop = "..."` key.
+    # Everything else (env, future scalars) is filtered out here.
+    shared_env = config.get("env", {})
+    apps = [(name, cfg) for name, cfg in config.items()
+            if isinstance(cfg, dict) and "desktop" in cfg]
+    if not apps:
+        logger.info("No app sections in perf.toml (need a `desktop = ...` key); skipping app config")
+
+    for app_name, cfg in apps:
+        logger.info(f"Configuring {app_name}")
+        env = {**shared_env, **cfg.get("env", {})}
+
+        features = [f for group in cfg.get("features", {}).values() for f in group]
+        write_desktop_override(
+            Path(cfg["desktop"]), env, features, cfg.get("switches", []),
+            uid, gid, home,
+        )
+
+        if local_state := cfg.get("local_state"):
+            patch_chromium_local_state(
+                home / local_state, cfg.get("local_state_flags", []),
+                cfg.get("process_name", app_name), uid, gid,
+            )
+
+        if argv_json := cfg.get("argv_json"):
+            merge_electron_argv_json(home / argv_json, cfg.get("argv", {}), uid, gid)
 
     logger.info("Current GPU state:")
     print(encode([gpu_state_row()]))
