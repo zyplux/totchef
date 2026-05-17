@@ -5,10 +5,26 @@
 
 # Packages installed at the end of the run (apt install -y).
 # Pin a version with apt's native name=version syntax: "ghostty=1.3.0~us1-0ubuntu1".
+# Grouped by source repo.
 packages = [
-    "brave-browser",
-    "zed",
+    # Ubuntu archive (universe)
+    "just",
     "ghostty",
+
+    # Ubuntu archive (restricted)
+    # RISK: when Ubuntu retires a branch they rebuild the old metapackage as a
+    # transitional shim (Depends: nvidia-driver-<NEW>-open) -> apt full-upgrade
+    # silently jumps branches. Mitigation: apt-preferences file pinning every
+    # other nvidia-driver-* to Pin-Priority: -1.
+    "nvidia-driver-580-open",
+
+    # debian.griffo.io
+    "zed",
+
+    # brave-browser
+    "brave-browser",
+
+    # vscode (Microsoft)
     "code-insiders",
 ]
 

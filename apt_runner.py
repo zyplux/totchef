@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["toon-format>=0.9.0b1"]
+# dependencies = ["loguru>=0.7", "toon-format>=0.9.0b1"]
 # ///
 """
 apt_runner.py — idempotent apt repo + key + pinning setup and package
@@ -48,6 +48,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from loguru import logger
 from toon_format import encode
 
 # apt requires files in preferences.d/ to have either no extension or `.pref`.
@@ -58,6 +59,14 @@ TRUSTED_GPGD_HOOK = Path("/etc/apt/apt.conf.d/99-trusted-gpgd-autounlock")
 SCRIPT = Path(__file__).resolve()
 APT_TOML = SCRIPT.parent / "apt.toml"
 FILES_DIR = SCRIPT.parent / "files"
+LOG_DIR = SCRIPT.parent / "logs"
+
+LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {level: <7} {message}"
+
+# Configured at import (re-runs under execvp), so the pre-sudo "Re-running
+# under sudo" message is also timestamped.
+logger.remove()
+logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
 
 
 def run(*cmd: str, **kw) -> subprocess.CompletedProcess:
@@ -65,7 +74,7 @@ def run(*cmd: str, **kw) -> subprocess.CompletedProcess:
 
 
 def write_file(path: Path, content: str, note: str = "") -> None:
-    print(f">> Writing {path}" + (f" ({note})" if note else ""))
+    logger.info(f"Writing {path}" + (f" ({note})" if note else ""))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     path.chmod(0o644)
@@ -73,11 +82,18 @@ def write_file(path: Path, content: str, note: str = "") -> None:
 
 def policy_row(pkg: str) -> dict:
     """Parse `apt-cache policy <pkg>` into a flat row for the TOON summary."""
-    out = subprocess.run(["apt-cache", "policy", pkg], capture_output=True, text=True).stdout
-    lines = out.splitlines()
-    installed = next((l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("Installed:")), "(none)")
-    candidate = next((l.split(":", 1)[1].strip() for l in lines if l.strip().startswith("Candidate:")), "(none)")
-    # Skip /var/lib/dpkg/status — apt's "installed on disk" bookkeeping, not a real repo.
+    lines = subprocess.run(
+        ["apt-cache", "policy", pkg], capture_output=True, text=True
+    ).stdout.splitlines()
+
+    def field(name: str) -> str:
+        prefix = f"{name}:"
+        return next(
+            (l.split(":", 1)[1].strip() for l in lines if l.strip().startswith(prefix)),
+            "(none)",
+        )
+
+    candidate = field("Candidate")
     # priority stays int so TOON emits it unquoted; 0 means "no match found".
     priority, source, matching, in_table = 0, "", False, False
     for line in lines:
@@ -86,7 +102,8 @@ def policy_row(pkg: str) -> dict:
             continue
         if not in_table:
             continue
-        if line.startswith("        "):  # source line (8+ space indent)
+        if line.startswith("        "):
+            # Skip /var/lib/dpkg/status — apt's "installed on disk" bookkeeping, not a real repo.
             if matching and not source:
                 bits = line.split()
                 if len(bits) >= 2 and bits[1] != "/var/lib/dpkg/status":
@@ -96,70 +113,53 @@ def policy_row(pkg: str) -> dict:
             matching = len(tokens) >= 2 and tokens[0] == candidate
             if matching:
                 priority = int(tokens[1])
-    return {"package": pkg, "installed": installed, "candidate": candidate,
+    return {"package": pkg, "installed": field("Installed"), "candidate": candidate,
             "priority": priority, "source": source}
 
 
-# Load config pre-sudo so TOML errors surface before the sudo re-exec.
-with APT_TOML.open("rb") as f:
-    config = tomllib.load(f)
-repos = config.get("repo", [])
-packages = config.get("packages", [])
+def setup_log_tee() -> Path:
+    """Tee stdout/stderr to a timestamped logfile, chowned to the invoking user.
 
-if os.geteuid() != 0:
-    print(">> Re-running under sudo")
-    os.execvp("sudo", ["sudo", sys.executable, __file__, *sys.argv[1:]])
+    Pre-chowning lets root-written content keep the original owner — tee runs
+    as root post-sudo but only appends to an already-owned file.
+    """
+    LOG_DIR.mkdir(exist_ok=True)
+    log_file = LOG_DIR / f"{SCRIPT.stem}-{datetime.now():%Y%m%d-%H%M%S}.log"
+    log_file.touch()
+    if sudo_user := os.environ.get("SUDO_USER"):
+        pw = pwd.getpwnam(sudo_user)
+        for p in (LOG_DIR, *LOG_DIR.iterdir()):
+            os.chown(p, pw.pw_uid, pw.pw_gid)
+    tee = subprocess.Popen(["tee", "-a", str(log_file)], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), 1)
+    os.dup2(tee.stdin.fileno(), 2)
+    tee.stdin.close()
+    return log_file
 
-# Hand logs back to the invoking user so they're not stuck as root-owned.
-# tee runs as root (post-sudo) but appends to an existing file, so the
-# pre-set ownership sticks.
-log_dir = SCRIPT.parent / "logs"
-log_dir.mkdir(exist_ok=True)
-log_file = log_dir / f"{SCRIPT.stem}-{datetime.now():%Y%m%d-%H%M%S}.log"
-log_file.touch()
-if sudo_user := os.environ.get("SUDO_USER"):
-    pw = pwd.getpwnam(sudo_user)
-    for p in (log_dir, *log_dir.iterdir()):
-        os.chown(p, pw.pw_uid, pw.pw_gid)
-tee = subprocess.Popen(["tee", "-a", str(log_file)], stdin=subprocess.PIPE)
-os.dup2(tee.stdin.fileno(), 1)
-os.dup2(tee.stdin.fileno(), 2)
-tee.stdin.close()
-print(f">> Logging this run to {log_file}")
-print(f">> Loaded config from {APT_TOML} ({len(repos)} repo(s), {len(packages)} package(s))")
 
-osr = platform.freedesktop_os_release()
-release = osr.get("VERSION_CODENAME") or osr.get("UBUNTU_CODENAME")
-if not release:
-    sys.exit("ERROR: could not determine release codename")
-print(f">> Detected release codename: {release}")
+def detect_release() -> str:
+    osr = platform.freedesktop_os_release()
+    release = osr.get("VERSION_CODENAME") or osr.get("UBUNTU_CODENAME")
+    if not release:
+        sys.exit("ERROR: could not determine release codename")
+    return release
 
-# Install the hook BEFORE any apt operation: the very next apt-get auto-unlocks
-# /etc/apt/trusted.gpg.d/ around dpkg, so no manual unlock is needed even when
-# re-running against a system where the dir is already immutable.
-hook_tmpl = (FILES_DIR / TRUSTED_GPGD_HOOK.name).read_text()
-write_file(TRUSTED_GPGD_HOOK, hook_tmpl, "auto-unlock dir around dpkg runs")
 
-pin = config["ubuntu_pin"]
-pin_blocks = "\n\n".join(
-    f"Package: *\nPin: release o=Ubuntu, a={s.format(release=release)}\nPin-Priority: {pin['priority']}"
-    for s in pin["suites"]
-)
-pref_tmpl = (FILES_DIR / UBUNTU_PREF.name).read_text()
-write_file(UBUNTU_PREF, pref_tmpl.format(priority=pin["priority"], pin_blocks=pin_blocks),
-           "uprank Ubuntu archives above third-party default")
+def write_ubuntu_pin(pin: dict, release: str) -> None:
+    blocks = "\n\n".join(
+        f"Package: *\nPin: release o=Ubuntu, a={s.format(release=release)}\nPin-Priority: {pin['priority']}"
+        for s in pin["suites"]
+    )
+    tmpl = (FILES_DIR / UBUNTU_PREF.name).read_text()
+    write_file(
+        UBUNTU_PREF,
+        tmpl.format(priority=pin["priority"], pin_blocks=blocks),
+        "uprank Ubuntu archives above third-party default",
+    )
 
-# A fresh system may lack curl/gnupg/ca-certificates.
-os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-print(">> Refreshing base apt cache and installing prerequisites")
-run("apt-get", "update")
-run("apt-get", "install", "-y", "--no-install-recommends", "curl", "gnupg", "ca-certificates")
 
-for repo in repos:
-    name = repo["name"]
-    keyring = Path(repo.get("keyring", f"/usr/share/keyrings/{name}.gpg"))
-    source = Path(repo.get("source_path", f"/etc/apt/sources.list.d/{name}.sources"))
-    print(f">> Installing {name} GPG key to {keyring}")
+def install_repo_key(repo: dict, keyring: Path) -> None:
+    logger.info(f"Installing {repo['name']} GPG key to {keyring}")
     keyring.parent.mkdir(parents=True, exist_ok=True)
     with urlopen(repo["key_url"]) as r:
         data = r.read()
@@ -170,6 +170,13 @@ for repo in repos:
     else:
         keyring.write_bytes(data)
     keyring.chmod(0o644)
+
+
+def configure_repo(repo: dict, release: str) -> None:
+    name = repo["name"]
+    keyring = Path(repo.get("keyring", f"/usr/share/keyrings/{name}.gpg"))
+    source = Path(repo.get("source_path", f"/etc/apt/sources.list.d/{name}.sources"))
+    install_repo_key(repo, keyring)
     lines = [
         "Types: deb",
         f"URIs: {repo['uris']}",
@@ -184,25 +191,65 @@ for repo in repos:
     lines.append(f"Signed-By: {keyring}")
     write_file(source, "\n".join(lines) + "\n")
 
-print(">> Refreshing apt cache with new repos")
-run("apt-get", "update")
 
-# bash is included as a control: it should show priority 900 (the Ubuntu pin).
-print()
-print(">> Verification — installed/candidate versions and effective pin priorities:")
-print(encode([policy_row(p) for p in [*packages, "bash"]]))
-print()
-print(f"--- {TRUSTED_GPGD} (expect 'i' attribute set) ---")
-run("lsattr", "-d", str(TRUSTED_GPGD))
+def main() -> None:
+    # Load config pre-sudo so TOML errors surface before the sudo re-exec.
+    with APT_TOML.open("rb") as f:
+        config = tomllib.load(f)
+    repos = config.get("repo", [])
+    packages = config.get("packages", [])
 
-if packages:
-    print(f"\n>> Installing packages: {' '.join(packages)}")
-    run("apt-get", "install", "-y", *packages)
+    if os.geteuid() != 0:
+        logger.info("Re-running under sudo")
+        os.execvp("sudo", ["sudo", sys.executable, __file__, *sys.argv[1:]])
 
-print(f"""
->> Done. Configured {len(repos)} repo(s) and {len(packages)} package(s).
-   Edit apt.toml to manage repos and the package list, then re-run.
+    log_file = setup_log_tee()
+    logger.info(f"Logging this run to {log_file}")
+    logger.info(f"Loaded config from {APT_TOML} ({len(repos)} repo(s), {len(packages)} package(s))")
 
->> Note: {TRUSTED_GPGD} is now immutable. Apt/dpkg operations unlock
-   it automatically via {TRUSTED_GPGD_HOOK}, so distro upgrades work.
-   To make a manual change there: sudo chattr -i {TRUSTED_GPGD}""")
+    release = detect_release()
+    logger.info(f"Detected release codename: {release}")
+
+    # Install the hook BEFORE any apt operation: the very next apt-get auto-unlocks
+    # /etc/apt/trusted.gpg.d/ around dpkg, so no manual unlock is needed even when
+    # re-running against a system where the dir is already immutable.
+    write_file(
+        TRUSTED_GPGD_HOOK,
+        (FILES_DIR / TRUSTED_GPGD_HOOK.name).read_text(),
+        "auto-unlock dir around dpkg runs",
+    )
+    write_ubuntu_pin(config["ubuntu_pin"], release)
+
+    # A fresh system may lack curl/gnupg/ca-certificates.
+    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+    logger.info("Refreshing base apt cache and installing prerequisites")
+    run("apt-get", "update")
+    run("apt-get", "install", "-y", "--no-install-recommends", "curl", "gnupg", "ca-certificates")
+
+    for repo in repos:
+        configure_repo(repo, release)
+
+    logger.info("Refreshing apt cache with new repos")
+    run("apt-get", "update")
+
+    # bash is included as a control: it should show priority 900 (the Ubuntu pin).
+    logger.info("Verification — installed/candidate versions and effective pin priorities:")
+    print(encode([policy_row(p) for p in [*packages, "bash"]]))
+    logger.info(f"{TRUSTED_GPGD} attributes (expect 'i' set):")
+    run("lsattr", "-d", str(TRUSTED_GPGD))
+
+    if packages:
+        logger.info(f"Installing packages: {' '.join(packages)}")
+        run("apt-get", "install", "-y", *packages)
+
+    logger.info(f"Done. Configured {len(repos)} repo(s) and {len(packages)} package(s).")
+    logger.info("Edit apt.toml to manage repos and the package list, then re-run.")
+    logger.info(
+        f"{TRUSTED_GPGD} is now immutable. Apt/dpkg operations unlock it automatically "
+        f"via {TRUSTED_GPGD_HOOK}, so distro upgrades work. "
+        f"To make a manual change there: sudo chattr -i {TRUSTED_GPGD}"
+    )
+
+
+if __name__ == "__main__":
+    main()
