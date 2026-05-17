@@ -1,17 +1,15 @@
 # Always prefer Ubuntu archives over third-party repos. Generated from apt.toml.
 #
-# Default repo priority is 500. We uprank Ubuntu main/updates/security to
-# {priority} so any third-party repo that ships a package with the
-# same name as one from Ubuntu (whether by collision or by malice) loses
-# to Ubuntu. Third-party-only packages still install at the default 500
-# because there's no Ubuntu version to outrank them.
+# Default repo priority is 500. Ubuntu main/updates/security are upranked
+# to {priority}, so any third-party package colliding by name with an
+# Ubuntu one loses to Ubuntu. Third-party-only packages still install at
+# 500 — nothing to outrank them.
 #
-# Backports is intentionally NOT upranked here: it has NotAutomatic: yes
-# which keeps it at priority 1 and prevents auto-install of backported
-# versions. Adding it to this file would defeat that.
+# Backports is intentionally NOT upranked: it ships NotAutomatic: yes
+# (priority 1) which blocks auto-install of backported versions, and
+# upranking would defeat that.
 #
-# To allow a specific third-party package to override Ubuntu, add a
-# package-specific pin at Pin-Priority > {priority} (e.g. 990) in a
-# separate file in this directory.
+# Per-package third-party override: add a pin with Pin-Priority > {priority}
+# (e.g. 990) in a separate file in this directory.
 
 {pin_blocks}

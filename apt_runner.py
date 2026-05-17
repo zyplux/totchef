@@ -4,37 +4,33 @@
 # dependencies = ["loguru>=0.7", "toon-format>=0.9.0b1"]
 # ///
 """
-apt_runner.py — idempotent apt repo + key + pinning setup and package
-install for a fresh Ubuntu/Kubuntu install.
+apt_runner.py — declarative apt state: repos, keys, pinning, full-upgrade,
+package install, autoremove. Idempotent; same script for first-run
+bootstrap and ongoing daily-driver maintenance. Actions run through nala
+(parallel downloads + `nala history undo` for rollback); nala is
+bootstrapped via apt-get on the first run.
 
-All repos and packages are declared in apt.toml alongside this script:
-  packages       packages to apt install at the end
-  [ubuntu_pin]   Ubuntu archive uprank policy ({release} interpolated)
+Config in apt.toml:
+  packages       installed at the end of the run
+  [ubuntu_pin]   uprank Ubuntu archives ({release} interpolated)
   [[repo]]       one block per third-party apt repo
 
-Both repos use the modern layout:
-  - GPG key in a non-globally-trusted location (NOT /etc/apt/trusted.gpg.d/)
-  - .sources file with `Signed-By:` so each key is only honored for its repo
+Repos use the modern layout: GPG key outside /etc/apt/trusted.gpg.d/ +
+.sources with `Signed-By:` so each key only authorises its own repo.
 
-Cross-repo safety: apt-preferences uprank Ubuntu's main/updates/security
-archives above the default priority of 500. Any third-party repo that
-ships a package with the same name as one from Ubuntu loses to Ubuntu.
-Third-party-only packages still install fine since no Ubuntu version
-exists to compete with them. To let a specific third-party package
-override Ubuntu, add a per-package pin at priority > 900 elsewhere in
+Cross-repo safety: apt-preferences upranks Ubuntu main/updates/security
+above the default 500, so a third-party package colliding by name with an
+Ubuntu one loses to Ubuntu. Third-party-only packages still install at
+500. Per-package third-party overrides need a pin > 900 in
 /etc/apt/preferences.d/.
 
-Hardening: /etc/apt/trusted.gpg.d/ is marked immutable (chattr +i) so
-install scripts that follow the old `cp foo.gpg /etc/apt/trusted.gpg.d/`
-pattern fail even as root. A DPkg::Pre/Post-Invoke hook auto-toggles
-the immutable bit around any dpkg run so apt upgrades AND do-release-
-upgrade work transparently (this was a real prior failure mode — a
-release upgrade aborted mid-way because ubuntu-keyring tried to install
-new files into the locked dir).
+Hardening: /etc/apt/trusted.gpg.d/ is chattr +i to block legacy install
+scripts that drop keys there. A DPkg::Pre/Post-Invoke hook unlocks it
+around dpkg runs so apt and do-release-upgrade still work (prior failure:
+release upgrade aborted when ubuntu-keyring couldn't write into it).
 
-Safe to re-run. Designed for a fresh install with nothing but the base
-system (no curl, no gnupg, no lsb-release) — only uv is required, to
-satisfy the shebang.
+Bootstraps from a clean system with just uv (no curl/gnupg required up
+front).
 """
 
 import os
@@ -69,8 +65,28 @@ logger.remove()
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
 
 
-def run(*cmd: str, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=True, **kw)
+def run(*cmd: str, note: str = "", check: bool = True, **kwargs) -> None:
+    if note:
+        logger.info(note)
+    subprocess.run(list(cmd), check=check, **kwargs)
+
+
+def nala(*args: str, note: str = "", **kwargs) -> None:
+    run("nala", *args, note=note, **kwargs)
+
+
+def print_toon(rows: list[dict], note: str = "") -> None:
+    if note:
+        logger.info(note)
+    print(encode(rows))
+
+
+def install_prereqs() -> None:
+    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+    run("apt-get", "update", note="Refreshing apt cache")
+    run("apt-get", "install", "-y", "--no-install-recommends",
+        "curl", "gnupg", "ca-certificates", "nala",
+        note="Installing prerequisites")
 
 
 def write_file(path: Path, content: str, note: str = "") -> None:
@@ -210,9 +226,9 @@ def main() -> None:
     release = detect_release()
     logger.info(f"Detected release codename: {release}")
 
-    # Install the hook BEFORE any apt operation: the very next apt-get auto-unlocks
-    # /etc/apt/trusted.gpg.d/ around dpkg, so no manual unlock is needed even when
-    # re-running against a system where the dir is already immutable.
+    # Install the hook before any apt op: the first apt-get auto-unlocks
+    # /etc/apt/trusted.gpg.d/ around dpkg, so no manual unlock is needed even
+    # on re-runs against an already-locked dir.
     write_file(
         TRUSTED_GPGD_HOOK,
         (FILES_DIR / TRUSTED_GPGD_HOOK.name).read_text(),
@@ -220,27 +236,26 @@ def main() -> None:
     )
     write_ubuntu_pin(config["ubuntu_pin"], release)
 
-    # A fresh system may lack curl/gnupg/ca-certificates.
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    logger.info("Refreshing base apt cache and installing prerequisites")
-    run("apt-get", "update")
-    run("apt-get", "install", "-y", "--no-install-recommends", "curl", "gnupg", "ca-certificates")
+    install_prereqs()
 
     for repo in repos:
         configure_repo(repo, release)
 
-    logger.info("Refreshing apt cache with new repos")
-    run("apt-get", "update")
+    nala("update", note="Refreshing apt cache with new repos")
+    # `nala list --upgradable` exits 1 when nothing matches (grep convention).
+    nala("list", "--upgradable", note="Upgradable packages:", check=False)
+    nala("full-upgrade", "-y", note="Running nala full-upgrade")
 
-    # bash is included as a control: it should show priority 900 (the Ubuntu pin).
-    logger.info("Verification — installed/candidate versions and effective pin priorities:")
-    print(encode([policy_row(p) for p in [*packages, "bash"]]))
-    logger.info(f"{TRUSTED_GPGD} attributes (expect 'i' set):")
-    run("lsattr", "-d", str(TRUSTED_GPGD))
+    print_toon(
+        [policy_row(p) for p in packages],
+        note="Verification — installed/candidate versions and effective pin priorities:",
+    )
+    run("lsattr", "-d", str(TRUSTED_GPGD), note=f"{TRUSTED_GPGD} attributes (expect 'i' set):")
 
     if packages:
-        logger.info(f"Installing packages: {' '.join(packages)}")
-        run("apt-get", "install", "-y", *packages)
+        nala("install", "-y", *packages, note=f"Installing packages: {' '.join(packages)}")
+
+    nala("autoremove", "-y", note="Removing unused packages with nala autoremove")
 
     logger.info(f"Done. Configured {len(repos)} repo(s) and {len(packages)} package(s).")
     logger.info("Edit apt.toml to manage repos and the package list, then re-run.")
