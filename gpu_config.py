@@ -146,17 +146,9 @@ def gpu_state_row() -> dict:
 
     nvidia_pci = bool(out("lspci", "-nn", "-d", "10de:"))
     prime = out("prime-select", "query") or "(not installed)"
-    session = os.environ.get("XDG_SESSION_TYPE", "")
-    if not session and (sudo_user := os.environ.get("SUDO_USER")):
-        r = subprocess.run(
-            ["sudo", "-u", sudo_user, "sh", "-c", "echo $XDG_SESSION_TYPE"],
-            capture_output=True, text=True,
-        )
-        session = r.stdout.strip() or "(unknown)"
     return {
         "nvidia_on_pci": "yes" if nvidia_pci else "no",
         "prime_mode": prime,
-        "session_type": session or "(unknown)",
     }
 
 
