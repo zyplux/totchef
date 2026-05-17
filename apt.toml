@@ -8,8 +8,9 @@ packages = [
     "just",
     "ghostty",
     "nala",
-    "nvidia-vaapi-driver", # VA-API -> NVDEC shim; required for VaapiOnNvidiaGPUs in Brave                            
+    "nvidia-vaapi-driver", # VA-API -> NVDEC shim; required for VaapiOnNvidiaGPUs in Brave
     "vainfo",              # diagnose VA-API: `LIBVA_DRIVER_NAME=nvidia vainfo`
+    "linux-crashdump",     # kdump + crash tools; captures full kernel oops to /var/crash
 
     # Ubuntu archive (restricted)
     # RISK: when Ubuntu retires a branch they rebuild the old metapackage as a
