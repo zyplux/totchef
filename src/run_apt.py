@@ -35,11 +35,9 @@ front).
 
 import os
 import platform
-import pwd
 import subprocess
 import sys
 import tomllib
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -47,28 +45,22 @@ from urllib.request import urlopen
 from loguru import logger
 from toon_format import encode
 
+from harness import (
+    SRC_DIR,
+    reexec_under_sudo,
+    run,
+    start_log_tee,
+    write_if_changed,
+)
+
 # apt requires files in preferences.d/ to have either no extension or `.pref`.
 UBUNTU_PREF = Path("/etc/apt/preferences.d/ubuntu-archives.pref")
 TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
 TRUSTED_GPGD_HOOK = Path("/etc/apt/apt.conf.d/99-trusted-gpgd-autounlock")
 
 SCRIPT = Path(__file__).resolve()
-APT_TOML = SCRIPT.parent / "apt.toml"
-FILES_DIR = SCRIPT.parent / "files"
-LOG_DIR = SCRIPT.parent / "logs"
-
-LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {level: <7} {message}"
-
-# Configured at import (re-runs under execvp), so the pre-sudo "Re-running
-# under sudo" message is also timestamped.
-logger.remove()
-logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
-
-
-def run(*cmd: str, note: str = "", check: bool = True, **kwargs) -> None:
-    if note:
-        logger.info(note)
-    subprocess.run(list(cmd), check=check, **kwargs)
+APT_TOML = SRC_DIR / "apt.toml"
+FILES_DIR = SRC_DIR / "files"
 
 
 def nala(*args: str, note: str = "", **kwargs) -> None:
@@ -97,73 +89,51 @@ def install_prereqs() -> None:
     )
 
 
-def write_file(path: Path, content: str, note: str = "") -> None:
-    logger.info(f"Writing {path}" + (f" ({note})" if note else ""))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    path.chmod(0o644)
-
-
-def policy_row(pkg: str) -> dict:
-    """Parse `apt-cache policy <pkg>` into a flat row for the TOON summary."""
+def build_policy_row(package: str) -> dict:
+    """Parse `apt-cache policy <package>` into a flat row for the TOON summary."""
     lines = subprocess.run(
-        ["apt-cache", "policy", pkg], capture_output=True, text=True
+        ["apt-cache", "policy", package], capture_output=True, text=True
     ).stdout.splitlines()
 
     def field(name: str) -> str:
         prefix = f"{name}:"
         return next(
-            (l.split(":", 1)[1].strip() for l in lines if l.strip().startswith(prefix)),
+            (
+                line.split(":", 1)[1].strip()
+                for line in lines
+                if line.strip().startswith(prefix)
+            ),
             "(none)",
         )
 
     candidate = field("Candidate")
     # priority stays int so TOON emits it unquoted; 0 means "no match found".
-    priority, source, matching, in_table = 0, "", False, False
+    priority, source = 0, ""
+    inside_candidate_section, inside_version_table = False, False
     for line in lines:
         if line.strip() == "Version table:":
-            in_table = True
+            inside_version_table = True
             continue
-        if not in_table:
+        if not inside_version_table:
             continue
         if line.startswith("        "):
             # Skip /var/lib/dpkg/status — apt's "installed on disk" bookkeeping, not a real repo.
-            if matching and not source:
-                bits = line.split()
-                if len(bits) >= 2 and bits[1] != "/var/lib/dpkg/status":
-                    source = urlparse(bits[1]).hostname or bits[1]
+            if inside_candidate_section and not source:
+                tokens = line.split()
+                if len(tokens) >= 2 and tokens[1] != "/var/lib/dpkg/status":
+                    source = urlparse(tokens[1]).hostname or tokens[1]
         else:  # version line: " *** VERSION PRIO" or "     VERSION PRIO"
             tokens = line.replace("***", "").split()
-            matching = len(tokens) >= 2 and tokens[0] == candidate
-            if matching:
+            inside_candidate_section = len(tokens) >= 2 and tokens[0] == candidate
+            if inside_candidate_section:
                 priority = int(tokens[1])
     return {
-        "package": pkg,
+        "package": package,
         "installed": field("Installed"),
         "candidate": candidate,
         "priority": priority,
         "source": source,
     }
-
-
-def setup_log_tee() -> Path:
-    """Tee stdout/stderr to a timestamped logfile, chowned to the invoking user.
-
-    Pre-chowning lets root-written content keep the original owner — tee runs
-    as root post-sudo but only appends to an already-owned file.
-    """
-    LOG_DIR.mkdir(exist_ok=True)
-    log_file = LOG_DIR / f"{SCRIPT.stem}-{datetime.now():%Y%m%d-%H%M%S}.log"
-    log_file.touch()
-    if sudo_user := os.environ.get("SUDO_USER"):
-        pw = pwd.getpwnam(sudo_user)
-        for p in (LOG_DIR, *LOG_DIR.iterdir()):
-            os.chown(p, pw.pw_uid, pw.pw_gid)
-    tee = subprocess.Popen(["tee", "-a", str(log_file)], stdin=subprocess.PIPE)
-    os.dup2(tee.stdin.fileno(), 1)
-    os.dup2(tee.stdin.fileno(), 2)
-    tee.stdin.close()
-    return log_file
 
 
 def detect_release() -> str:
@@ -180,10 +150,10 @@ def write_ubuntu_pin(pin: dict, release: str) -> None:
         for s in pin["suites"]
     )
     tmpl = (FILES_DIR / UBUNTU_PREF.name).read_text()
-    write_file(
+    write_if_changed(
         UBUNTU_PREF,
         tmpl.format(priority=pin["priority"], pin_blocks=blocks),
-        "uprank Ubuntu archives above third-party default",
+        note="uprank Ubuntu archives above third-party default",
     )
 
 
@@ -218,7 +188,7 @@ def configure_repo(repo: dict, release: str) -> None:
     if archs := repo.get("architectures"):
         lines.append(f"Architectures: {archs}")
     lines.append(f"Signed-By: {keyring}")
-    write_file(source, "\n".join(lines) + "\n")
+    write_if_changed(source, "\n".join(lines) + "\n")
 
 
 def main() -> None:
@@ -228,11 +198,9 @@ def main() -> None:
     repos = config.get("repo", [])
     packages = config.get("packages", [])
 
-    if os.geteuid() != 0:
-        logger.info("Re-running under sudo")
-        os.execvp("sudo", ["sudo", sys.executable, __file__, *sys.argv[1:]])
+    reexec_under_sudo(SCRIPT)
 
-    log_file = setup_log_tee()
+    log_file = start_log_tee(SCRIPT)
     logger.info(f"Logging this run to {log_file}")
     logger.info(
         f"Loaded config from {APT_TOML} ({len(repos)} repo(s), {len(packages)} package(s))"
@@ -244,10 +212,10 @@ def main() -> None:
     # Install the hook before any apt op: the first apt-get auto-unlocks
     # /etc/apt/trusted.gpg.d/ around dpkg, so no manual unlock is needed even
     # on re-runs against an already-locked dir.
-    write_file(
+    write_if_changed(
         TRUSTED_GPGD_HOOK,
         (FILES_DIR / TRUSTED_GPGD_HOOK.name).read_text(),
-        "auto-unlock dir around dpkg runs",
+        note="auto-unlock dir around dpkg runs",
     )
     write_ubuntu_pin(config["ubuntu_pin"], release)
 
@@ -260,7 +228,7 @@ def main() -> None:
     # `nala list --upgradable` exits 1 when nothing matches (grep convention).
     nala("list", "--upgradable", note="Upgradable packages:", check=False)
 
-    rows = [policy_row(p) for p in packages]
+    rows = [build_policy_row(p) for p in packages]
     print_toon(
         rows,
         note="Verification — installed/candidate versions and effective pin priorities:",

@@ -15,23 +15,21 @@ allowlisted Chromium flags).
 
 import json
 import os
-import pwd
 import subprocess
-import sys
 import tomllib
-from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
 
+from harness import (
+    SRC_DIR,
+    get_invoking_user,
+    reexec_under_sudo,
+    start_log_tee,
+)
+
 SCRIPT = Path(__file__).resolve()
-PERF_TOML = SCRIPT.parent / "perf.toml"
-LOG_DIR = SCRIPT.parent / "logs"
-
-LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {level: <7} {message}"
-
-logger.remove()
-logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
+PERF_TOML = SRC_DIR / "perf.toml"
 
 
 def rewrite_exec_line(
@@ -151,27 +149,29 @@ def patch_chromium_local_state(
         )
         return
 
-    data = json.loads(local_state.read_text())
-    experiments = data.setdefault("browser", {}).setdefault(
+    local_state_json = json.loads(local_state.read_text())
+    experiments = local_state_json.setdefault("browser", {}).setdefault(
         "enabled_labs_experiments", []
     )
-    before = set(experiments)
-    after = before | set(flags)
-    if after == before:
+    existing_flags = set(experiments)
+    merged_flags = existing_flags | set(flags)
+    if merged_flags == existing_flags:
         logger.info(f"Local State already has all {len(flags)} flag entries")
         return
 
-    data["browser"]["enabled_labs_experiments"] = sorted(after)
-    local_state.write_text(json.dumps(data, indent=2))
+    local_state_json["browser"]["enabled_labs_experiments"] = sorted(merged_flags)
+    local_state.write_text(json.dumps(local_state_json, indent=2))
     os.chown(local_state, uid, gid)
-    logger.info(f"Local State: added {sorted(after - before)}")
+    logger.info(f"Local State: added {sorted(merged_flags - existing_flags)}")
 
 
-def merge_electron_argv_json(path: Path, keys: dict, uid: int, gid: int) -> None:
-    """Merge `keys` into an Electron-style argv.json, preserving any other keys
-    the user added (e.g. crash-reporter-id). VS Code ships the default file full
-    of // comments — those get stripped on first managed write."""
-    if not keys:
+def merge_electron_argv_json(
+    path: Path, argv_overrides: dict, uid: int, gid: int
+) -> None:
+    """Merge `argv_overrides` into an Electron-style argv.json, preserving any
+    other keys the user added (e.g. crash-reporter-id). VS Code ships the default
+    file full of // comments — those get stripped on first managed write."""
+    if not argv_overrides:
         return
     existing: dict = {}
     if path.exists():
@@ -182,7 +182,7 @@ def merge_electron_argv_json(path: Path, keys: dict, uid: int, gid: int) -> None
         )
         if no_comments.strip():
             existing = json.loads(no_comments)
-    merged = {**existing, **keys}
+    merged = {**existing, **argv_overrides}
     new_text = json.dumps(merged, indent=2) + "\n"
 
     if path.exists() and path.read_text() == new_text:
@@ -192,76 +192,53 @@ def merge_electron_argv_json(path: Path, keys: dict, uid: int, gid: int) -> None
     path.write_text(new_text)
     os.chown(path.parent, uid, gid)
     os.chown(path, uid, gid)
-    logger.info(f"Writing  : {path}  (argv keys merged: {sorted(keys)})")
+    logger.info(f"Writing  : {path}  (argv keys merged: {sorted(argv_overrides)})")
 
 
 def configure_app(
     app_name: str,
-    cfg: dict,
+    app_config: dict,
     shared_env: dict[str, str],
     uid: int,
     gid: int,
     home: Path,
 ) -> None:
     logger.info(f"Configuring {app_name}")
-    env = {**shared_env, **cfg.get("env", {})}
+    env = {**shared_env, **app_config.get("env", {})}
 
-    features = [f for group in cfg.get("features", {}).values() for f in group]
+    features = [f for group in app_config.get("features", {}).values() for f in group]
     write_desktop_override(
-        Path(cfg["desktop"]),
+        Path(app_config["desktop"]),
         env,
         features,
-        cfg.get("switches", []),
+        app_config.get("switches", []),
         uid,
         gid,
         home,
     )
 
-    if local_state := cfg.get("local_state"):
+    if local_state := app_config.get("local_state"):
         patch_chromium_local_state(
             home / local_state,
-            cfg.get("local_state_flags", []),
-            cfg.get("process_name", app_name),
+            app_config.get("local_state_flags", []),
+            app_config.get("process_name", app_name),
             uid,
             gid,
         )
 
-    if argv_json := cfg.get("argv_json"):
-        merge_electron_argv_json(home / argv_json, cfg.get("argv", {}), uid, gid)
-
-
-def get_invoking_user() -> tuple[str, int, int, Path]:
-    sudo_user = os.environ.get("SUDO_USER")
-    if not sudo_user:
-        sys.exit("ERROR: SUDO_USER not set; run via sudo, not as root directly.")
-    pw = pwd.getpwnam(sudo_user)
-    return sudo_user, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
-
-
-def setup_log_tee() -> Path:
-    LOG_DIR.mkdir(exist_ok=True)
-    log_file = LOG_DIR / f"{SCRIPT.stem}-{datetime.now():%Y%m%d-%H%M%S}.log"
-    log_file.touch()
-    if sudo_user := os.environ.get("SUDO_USER"):
-        pw = pwd.getpwnam(sudo_user)
-        for p in (LOG_DIR, *LOG_DIR.iterdir()):
-            os.chown(p, pw.pw_uid, pw.pw_gid)
-    tee = subprocess.Popen(["tee", "-a", str(log_file)], stdin=subprocess.PIPE)
-    os.dup2(tee.stdin.fileno(), 1)
-    os.dup2(tee.stdin.fileno(), 2)
-    tee.stdin.close()
-    return log_file
+    if argv_json := app_config.get("argv_json"):
+        merge_electron_argv_json(
+            home / argv_json, app_config.get("argv", {}), uid, gid
+        )
 
 
 def main() -> None:
     with PERF_TOML.open("rb") as f:
         config = tomllib.load(f)
 
-    if os.geteuid() != 0:
-        logger.info("Re-running under sudo")
-        os.execvp("sudo", ["sudo", sys.executable, __file__, *sys.argv[1:]])
+    reexec_under_sudo(SCRIPT)
 
-    log_file = setup_log_tee()
+    log_file = start_log_tee(SCRIPT)
     logger.info(f"Logging this run to {log_file}")
     logger.info(f"Loaded config from {PERF_TOML}")
 
@@ -272,9 +249,9 @@ def main() -> None:
     # Everything else (env, future scalars) is filtered out here.
     shared_env = config.get("env", {})
     apps = [
-        (name, cfg)
-        for name, cfg in config.items()
-        if isinstance(cfg, dict) and "desktop" in cfg
+        (name, app_config)
+        for name, app_config in config.items()
+        if isinstance(app_config, dict) and "desktop" in app_config
     ]
     if not apps:
         logger.info(
@@ -282,8 +259,8 @@ def main() -> None:
         )
         return
 
-    for app_name, cfg in apps:
-        configure_app(app_name, cfg, shared_env, uid, gid, home)
+    for app_name, app_config in apps:
+        configure_app(app_name, app_config, shared_env, uid, gid, home)
 
     logger.info("Done.")
     logger.info(

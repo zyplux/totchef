@@ -8,11 +8,15 @@ ongoing upkeep.
 ## One-time setup
 
 ```bash
-sudo ./run_apt.py                     # repos, keys, pin priorities, full-upgrade, packages
-sudo ./run_gpu_conf.py                # egpu-prime.service (boot-time prime-select)
-sudo ./run_apps_conf.py               # Brave/Code Insiders launcher + flag overrides
+./src/run_url_installs.py             # user-scoped CLIs (bun, uv, claude, rustup, cargo-binstall)
+./src/run_cargo.py                    # user-scoped cargo packages (just, just-lsp, rumdl, cargo-update)
+sudo ./src/run_apt.py                 # repos, keys, pin priorities, full-upgrade, packages
+sudo ./src/run_gpu_conf.py            # egpu-prime.service (boot-time prime-select)
+sudo ./src/run_apps_conf.py           # Brave/Code Insiders launcher + flag overrides
 sudo reboot
 ```
+
+Or `just up` to chain all five.
 
 After reboot, the egpu-prime service runs before SDDM and picks
 `prime-select nvidia` when the eGPU is on PCI, else `prime-select on-demand`.
@@ -22,14 +26,18 @@ No manual commands.
 
 | File | Purpose |
 |---|---|
-| `apt.toml` | repos, packages, pin priorities |
-| `perf.toml` | Shared `[env]`; one section per app (`desktop` path + flags via `features`/`switches`/`local_state_flags`/`argv` as appropriate) |
-| `files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
+| `src/apt.toml` | repos, packages, pin priorities |
+| `src/perf.toml` | Shared `[env]`; one section per app (`desktop` path + flags via `features`/`switches`/`local_state_flags`/`argv` as appropriate) |
+| `src/urls.toml` | user-scoped CLI installers (vendor `curl \| bash` scripts) |
+| `src/cargo.toml` | user-scoped cargo packages installed via `cargo-binstall` |
+| `src/files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
+| `src/harness.py` | shared subprocess / log-tee / sudo plumbing imported by every `run_*.py` |
 | `logs/` | timestamped per-run log (chowned to invoking user) |
 
 Edit a TOML, re-run the matching script (`run_apt.py` for `apt.toml`,
-`run_apps_conf.py` for `perf.toml`; `run_gpu_conf.py` takes no config).
-All scripts only rewrite files whose contents would actually change, so idle
+`run_apps_conf.py` for `perf.toml`, `run_url_installs.py` for `urls.toml`,
+`run_cargo.py` for `cargo.toml`; `run_gpu_conf.py` takes no config). All
+scripts only rewrite files whose contents would actually change, so idle
 re-runs are cheap.
 
 ## Verify after first boot
