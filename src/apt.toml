@@ -26,6 +26,9 @@ packages = [
 
     # vscode (Microsoft)
     "code-insiders",
+
+    # signal-desktop
+    "signal-desktop",
 ]
 
 # Ubuntu archive suites upranked above third-party repos.
@@ -64,3 +67,9 @@ uris = "https://brave-browser-apt-release.s3.brave.com"
 name = "vscode"
 key_url = "https://packages.microsoft.com/keys/microsoft.asc"
 uris = "https://packages.microsoft.com/repos/code"
+
+[[repo]]
+name = "signal-desktop"
+key_url = "https://updates.signal.org/desktop/apt/keys.asc"
+uris = "https://updates.signal.org/desktop/apt"
+suites = "xenial"

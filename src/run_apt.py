@@ -40,7 +40,7 @@ import sys
 import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from loguru import logger
 from toon_format import encode
@@ -136,6 +136,39 @@ def build_policy_row(package: str) -> dict:
     }
 
 
+def is_trusted_gpgd_immutable() -> bool:
+    completed = subprocess.run(
+        ["lsattr", "-d", str(TRUSTED_GPGD)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not completed.stdout:
+        return False
+    return "i" in completed.stdout.split(maxsplit=1)[0]
+
+
+def ensure_trusted_gpgd_hardened() -> None:
+    write_if_changed(
+        TRUSTED_GPGD_HOOK,
+        (FILES_DIR / TRUSTED_GPGD_HOOK.name).read_text(),
+        note="auto-unlock dir around dpkg runs",
+    )
+    if is_trusted_gpgd_immutable():
+        return
+    run(
+        "chattr",
+        "+i",
+        str(TRUSTED_GPGD),
+        note=f"Setting immutable bit on {TRUSTED_GPGD}",
+    )
+    logger.info(
+        f"{TRUSTED_GPGD} is now immutable. Apt/dpkg operations unlock it automatically "
+        f"via {TRUSTED_GPGD_HOOK}, so distro upgrades work. "
+        f"To make a manual change there: sudo chattr -i {TRUSTED_GPGD}"
+    )
+
+
 def detect_release() -> str:
     osr = platform.freedesktop_os_release()
     release = osr.get("VERSION_CODENAME") or osr.get("UBUNTU_CODENAME")
@@ -160,7 +193,10 @@ def write_ubuntu_pin(pin: dict, release: str) -> None:
 def install_repo_key(repo: dict, keyring: Path) -> None:
     logger.info(f"Installing {repo['name']} GPG key to {keyring}")
     keyring.parent.mkdir(parents=True, exist_ok=True)
-    with urlopen(repo["key_url"]) as r:
+    # Signal's CDN (and likely others behind WAFs) 403s the default
+    # `Python-urllib/*` UA — identify as the project instead.
+    request = Request(repo["key_url"], headers={"User-Agent": "sys-conf-py/run_apt.py"})
+    with urlopen(request) as r:
         data = r.read()
     # ASCII-armored keys start with the RFC 4880 §6.2 header; binary OpenPGP
     # packets start with a high-bit-set tag byte and never match.
@@ -209,14 +245,7 @@ def main() -> None:
     release = detect_release()
     logger.info(f"Detected release codename: {release}")
 
-    # Install the hook before any apt op: the first apt-get auto-unlocks
-    # /etc/apt/trusted.gpg.d/ around dpkg, so no manual unlock is needed even
-    # on re-runs against an already-locked dir.
-    write_if_changed(
-        TRUSTED_GPGD_HOOK,
-        (FILES_DIR / TRUSTED_GPGD_HOOK.name).read_text(),
-        note="auto-unlock dir around dpkg runs",
-    )
+    ensure_trusted_gpgd_hardened()
     write_ubuntu_pin(config["ubuntu_pin"], release)
 
     install_prereqs()
@@ -264,12 +293,6 @@ def main() -> None:
 
     logger.info(
         f"Done. Configured {len(repos)} repo(s) and {len(packages)} package(s)."
-    )
-    logger.info("Edit apt.toml to manage repos and the package list, then re-run.")
-    logger.info(
-        f"{TRUSTED_GPGD} is now immutable. Apt/dpkg operations unlock it automatically "
-        f"via {TRUSTED_GPGD_HOOK}, so distro upgrades work. "
-        f"To make a manual change there: sudo chattr -i {TRUSTED_GPGD}"
     )
 
 
