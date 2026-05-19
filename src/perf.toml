@@ -4,11 +4,6 @@
 # Electron. (run_gpu_conf.py installs the egpu-prime boot service and reads no
 # config here — its inputs are static assets in files/.)
 
-# Per-app [<app>.env] overrides or extends.
-[env]
-LIBVA_DRIVER_NAME = "nvidia"
-NVD_BACKEND       = "direct"
-
 [brave]
 desktop     = "/usr/share/applications/brave-browser.desktop"
 local_state = ".config/BraveSoftware/Brave-Browser/Local State"
@@ -18,23 +13,17 @@ local_state_flags = [
     # "enable-unsafe-webgpu@1",
 ]
 
-# Don't re-add --render-node-override: Chromium silently overrides it on Optimus.
-# Brave's GL pipeline cannot be moved off the Intel iGPU via flags under native
-# Wayland. VA-API decode still goes through NVIDIA via LIBVA_DRIVER_NAME +
-# nvidia-vaapi-driver. disable-features turns off Chromium's default Vulkan
-# trials that error on Wayland Ozone (wayland_surface_factory.cc).
+# render-node-override is silently overridden by Chromium on Optimus.
+# disable-features kills Vulkan trials that error on Wayland Ozone.
 switches = [
     "disable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE",
 ]
 
 # Joined into one --enable-features=A,B,C per group. Comment a group to disable.
+# VaapiOnNvidiaGPUs is required on this box: Chromium disables VA-API whenever
+# an NVIDIA GPU is detected in PCI, regardless of which driver/renderer is
+# actually in use.
 [brave.features]
-# VaapiIgnoreDriverChecks removed 2026-05-19 — it bypasses Chromium's per-driver
-# profile allowlist, and was only needed because nvidia-vaapi-driver isn't on the
-# allowlist. With it on, Chromium attempts decode on profiles the bridge driver
-# advertises but NVDEC actually refuses, producing the vaEndPicture / "internal
-# decoding error" lines seen in journalctl. Re-add only if nvidia-vaapi-driver
-# stays load-bearing for a codec (e.g. AV1) that Intel iHD doesn't expose.
 video_decode = ["VaapiOnNvidiaGPUs", "AcceleratedVideoDecodeLinuxGL", "AcceleratedVideoDecodeLinuxZeroCopyGL"]
 video_encode = ["AcceleratedVideoEncoder"]
 pipewire     = ["WebRTCPipeWireCapturer"]
@@ -44,11 +33,8 @@ wayland_sync = ["WaylandLinuxDrmSyncobj"]
 desktop   = "/usr/share/applications/code-insiders.desktop"
 argv_json = ".vscode-insiders/argv.json"
 
-# Don't add --render-node-override here: empirically this is NOT a no-op for
-# VS Code Insiders' Electron 39 — passing renderD129 makes the GPU process
-# never spawn, the singleton hangs, and the next launch SIGTRAPs on the IPC
-# handshake (coredumps in journal, repro 2026-05-19). Brave silently overrides
-# it on Optimus; Electron does not.
+# render-node-override here hangs the GPU process at startup — Electron does
+# not silently override it the way Brave's Chromium does on Optimus.
 switches = []
 
 # Keys go through VS Code's hardcoded allowlist; anything outside it is dropped.

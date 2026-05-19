@@ -8,8 +8,7 @@ packages = [
     "just",
     "ghostty",
     "nala",
-    "nvidia-vaapi-driver", # VA-API -> NVDEC shim; required for VaapiOnNvidiaGPUs in Brave
-    "vainfo",              # diagnose VA-API: `LIBVA_DRIVER_NAME=nvidia vainfo`
+    "vainfo",              # diagnose VA-API: `vainfo` alone auto-picks iHD
     "linux-crashdump",     # kdump + crash tools; captures full kernel oops to /var/crash
 
     # Ubuntu archive (restricted)
