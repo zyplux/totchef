@@ -32,11 +32,15 @@ SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 LOG_DIR = REPO_ROOT / "logs"
 
-LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {level: <7} {message}"
+LOG_FORMAT = (
+    "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <22} {level: <7} {message}"
+)
 
 # Configured at import so the pre-sudo "Re-running under sudo" message is also
-# timestamped (execvp re-imports this module in the elevated process).
+# timestamped (execvp re-imports this module in the elevated process, which
+# re-resolves sys.argv[0] and re-binds the runner name in the elevated logger).
 logger.remove()
+logger.configure(extra={"runner": Path(sys.argv[0]).stem})
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
 
 

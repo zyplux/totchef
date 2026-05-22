@@ -4,15 +4,20 @@
 # dependencies = ["loguru>=0.7"]
 # ///
 """
-Idempotent per-app Chromium/Electron config from apps_config.toml.
+Idempotent per-app config from apps_config.toml.
 
-For each section with `desktop = "..."`: writes a per-user .desktop
-override with env prefix + --enable-features + --<switch>es. Optionally
-patches a Chromium-family `Local State` (for brave://flags-style UI
-mirroring) and/or merges an Electron-style `argv.json` (for VS Code's
-allowlisted Chromium flags). Refreshes KDE's ksycoca cache if any
-.desktop was rewritten — without it the launcher keeps spawning apps
-with the previously-cached Exec line.
+Dispatches per section on which key(s) are present:
+- `desktop`       — writes a per-user .desktop override with env prefix +
+                    --enable-features + --<switch>es.
+- `local_state`   — patches a Chromium-family `Local State` for
+                    brave://flags-style UI mirroring.
+- `argv_json`     — merges an Electron-style argv.json for allowlisted
+                    Chromium flags (e.g. VS Code).
+- `settings_json` — merges an `env` block into a JSON settings file
+                    (e.g. ~/.claude/settings.json's env field).
+
+Refreshes KDE's ksycoca cache if any .desktop was rewritten — without it
+the launcher keeps spawning apps with the previously-cached Exec line.
 """
 
 import json
@@ -205,6 +210,33 @@ def merge_electron_argv_json(
     return True
 
 
+def merge_settings_json_env(
+    path: Path, env_overrides: dict[str, str], uid: int, gid: int
+) -> bool:
+    """Merge `env_overrides` into the top-level `env` key of a JSON settings
+    file (e.g. ~/.claude/settings.json), preserving every other key the user
+    has set. Existing env entries with the same name are overridden — the TOML
+    declares the desired state. Returns True if a write happened."""
+    if not env_overrides:
+        return False
+    existing: dict = {}
+    if path.exists():
+        existing = json.loads(path.read_text())
+    new_env = {**existing.get("env", {}), **env_overrides}
+    merged = {**existing, "env": new_env}
+    new_text = json.dumps(merged, indent=2) + "\n"
+
+    if path.exists() and path.read_text() == new_text:
+        logger.info(f"Unchanged: {path}")
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new_text)
+    os.chown(path.parent, uid, gid)
+    os.chown(path, uid, gid)
+    logger.info(f"Writing  : {path}  (env keys merged: {sorted(env_overrides)})")
+    return True
+
+
 def configure_app(
     app_name: str,
     app_config: dict,
@@ -218,17 +250,19 @@ def configure_app(
     separately because only .desktop writes need a ksycoca refresh."""
     logger.info(f"Configuring {app_name}")
     env = {**shared_env, **app_config.get("env", {})}
-
     features = chromium_features + app_config.get("features", [])
-    desktop_change = write_desktop_override(
-        Path(app_config["desktop"]),
-        env,
-        features,
-        app_config.get("switches", []),
-        uid,
-        gid,
-        home,
-    )
+
+    desktop_change = False
+    if desktop := app_config.get("desktop"):
+        desktop_change = write_desktop_override(
+            Path(desktop),
+            env,
+            features,
+            app_config.get("switches", []),
+            uid,
+            gid,
+            home,
+        )
 
     local_state_change = False
     if local_state := app_config.get("local_state"):
@@ -247,7 +281,19 @@ def configure_app(
             argv["enable-features"] = ",".join(features)
         argv_change = merge_electron_argv_json(home / argv_json, argv, uid, gid)
 
-    return (desktop_change or local_state_change or argv_change, desktop_change)
+    settings_env_change = False
+    if settings_json := app_config.get("settings_json"):
+        settings_env_change = merge_settings_json_env(
+            home / settings_json,
+            app_config.get("settings_env", {}),
+            uid,
+            gid,
+        )
+
+    any_change = (
+        desktop_change or local_state_change or argv_change or settings_env_change
+    )
+    return (any_change, desktop_change)
 
 
 def refresh_kde_cache(sudo_user: str) -> None:
@@ -281,18 +327,20 @@ def main() -> None:
     sudo_user, uid, gid, home = get_invoking_user()
     logger.info(f"Acting on behalf of {sudo_user}  (uid={uid}, home={home})")
 
-    # Per-app sections are identified by having a `desktop = "..."` key.
+    # Per-app sections are identified by carrying at least one dispatch marker key.
     # Everything else (env, [chromium], future scalars) is filtered out here.
     shared_env = config.get("env", {})
     chromium_features = config.get("chromium", {}).get("features", [])
+    dispatch_keys = {"desktop", "settings_json"}
     apps = [
         (name, app_config)
         for name, app_config in config.items()
-        if isinstance(app_config, dict) and "desktop" in app_config
+        if isinstance(app_config, dict) and dispatch_keys & app_config.keys()
     ]
     if not apps:
         logger.info(
-            "No app sections in apps_config.toml (need a `desktop = ...` key); nothing to do"
+            "No app sections in apps_config.toml "
+            f"(need one of {sorted(dispatch_keys)}); nothing to do"
         )
         return
 

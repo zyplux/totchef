@@ -53,3 +53,14 @@ switches = []
 "ozone-platform-hint"      = "auto"
 "enable-gpu-rasterization" = true
 "ignore-gpu-blocklist"     = true
+
+# Claude Code CLI: suppress claude.ai account-level MCP connectors from
+# auto-loading into local sessions. ENABLE_CLAUDEAI_MCP_SERVERS=false is the
+# documented switch (https://code.claude.com/docs/en/mcp#use-mcp-servers-from-claude-ai);
+# set in settings.json's env block — narrower blast radius than ~/.bashrc, which
+# would leak the value into every child shell.
+[claude_code]
+settings_json = ".claude/settings.json"
+
+[claude_code.settings_env]
+ENABLE_CLAUDEAI_MCP_SERVERS = "false"

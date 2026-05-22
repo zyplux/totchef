@@ -27,7 +27,7 @@ No manual commands.
 | File | Purpose |
 |---|---|
 | `src/apt_config.toml` | repos, packages, pin priorities |
-| `src/apps_config.toml` | Shared `[env]`; one section per app (`desktop` path + flags via `features`/`switches`/`local_state_flags`/`argv` as appropriate) |
+| `src/apps_config.toml` | Shared `[env]`; one section per app, dispatched on marker keys: `desktop` (launcher override + flags via `features`/`switches`), `local_state` (Chromium Local State flags), `argv_json` (Electron argv.json), `settings_json` (JSON settings file with `settings_env` block, e.g. Claude Code) |
 | `src/url_config.toml` | user-scoped CLI installers (vendor `curl \| bash` scripts) |
 | `src/cargo_config.toml` | user-scoped cargo packages installed via `cargo-binstall` |
 | `src/files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
