@@ -32,7 +32,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from harness import SRC_DIR, find_binary, start_log_tee
+from harness import SRC_DIR, find_binary, start_log_tee, stream_subprocess
 
 SCRIPT = Path(__file__).resolve()
 UV_CONFIG_TOML = SRC_DIR / "uv_config.toml"
@@ -55,13 +55,11 @@ def list_installed_tools(uv: Path) -> set[str]:
     }
 
 
-def install_or_upgrade(uv: Path, name: str, installed: set[str]) -> None:
-    if name in installed:
-        logger.info(f"Upgrading {name}")
-        subprocess.run([str(uv), "tool", "upgrade", name], check=True)
-    else:
-        logger.info(f"Installing {name}")
-        subprocess.run([str(uv), "tool", "install", name], check=True)
+def install_or_upgrade(uv: Path, name: str, installed: set[str], tag: str) -> None:
+    action, verb = (
+        ("Upgrading", "upgrade") if name in installed else ("Installing", "install")
+    )
+    stream_subprocess([str(uv), "tool", verb, name], tag, note=action)
 
 
 def main() -> None:
@@ -82,17 +80,22 @@ def main() -> None:
         logger.info(f"No `packages` entries in {UV_CONFIG_TOML}; nothing to do")
         return
 
-    log_file = start_log_tee(SCRIPT)
-    logger.info(f"Logging this run to {log_file}")
-    logger.info(f"Using uv: {uv}")
-    logger.info(f"Running {len(requested)} uv tool(s) in parallel from {UV_CONFIG_TOML}")
+    start_log_tee()
+    logger.info(f"Running {len(requested)} uv tool(s) in parallel")
 
     installed = list_installed_tools(uv)
 
+    tag_width = max(len(name) for name in requested)
     failures: list[tuple[str, Exception]] = []
     with ThreadPoolExecutor(max_workers=len(requested)) as pool:
         pending = {
-            pool.submit(install_or_upgrade, uv, name, installed): name
+            pool.submit(
+                install_or_upgrade,
+                uv,
+                name,
+                installed,
+                f"[{name:>{tag_width}}]",
+            ): name
             for name in requested
         }
         for future in as_completed(pending):

@@ -6,6 +6,7 @@
 # Re-run src/install_cargo_packages.py after editing. Missing entries are NOT uninstalled.
 
 packages = [
+    "cargo-binstall",
     "cargo-update",
     "just",
     "just-lsp",

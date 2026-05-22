@@ -6,65 +6,44 @@
 """
 Idempotent cargo installer/updater driven by cargo_config.toml.
 
-For each `packages` entry:
-  not installed -> `cargo binstall --no-confirm <pkg>`
-  installed     -> `cargo binstall --force --no-confirm <pkg>` (re-fetch latest)
+Hands every requested crate to a single `cargo binstall --no-confirm pkg1 pkg2 ...`
+call. cargo-binstall resolves each crate's latest release, compares against the
+installed version recorded in ~/.cargo/.crates.toml, and installs / upgrades /
+skips per crate. Idempotency is built in.
 
-Installed crates are detected from a single up-front `cargo install --list`
-snapshot. Each crate is announced by a column-0 line ending in `:`
-(e.g. `just v1.36.0:`); binary names below it are indented and ignored.
-cargo-binstall writes to cargo's own .crates.toml registry, so binstall'd
-and source-built packages share one index.
+cargo-binstall parallelizes resolution and download across requested crates
+inside one process, so a ThreadPool wrapper around N single-crate invocations
+would just add process-startup overhead and per-process cache-lock contention
+without buying parallelism.
 
-Packages are processed concurrently via a thread pool; cargo and binstall
-serialize conflicting filesystem work via the cargo package-cache lock.
+cargo-binstall writes to cargo's own .crates.toml registry, so binstall'd and
+source-built packages share one index.
 
 cargo-binstall is invoked by absolute path to sidestep the bootstrap PATH
-problem — see logs/install_from_urls-*.log for context.
+problem — see logs/sys-conf-py-*.log for context.
 
-Requires cargo and cargo-binstall to be installed first; run
-./src/install_from_urls.py if either is missing.
+Bootstraps cargo-binstall via `cargo install cargo-binstall` if it isn't
+already on disk. That's a slow source compile, but only happens once per
+fresh system; thereafter cargo-binstall is in cargo_config.toml's package
+list and updates itself in the same batch as everything else (version-
+aware, ~1s). Requires cargo (from rustup) — run ./src/install_from_urls.py
+first if cargo is missing.
 
-Runs as the invoking user — cargo writes into ~/.cargo, so the script
-refuses to run as root (toolchains would land under /root otherwise).
+Runs as the invoking user — cargo writes into ~/.cargo, so the script refuses
+to run as root (toolchains would land under /root otherwise).
 """
 
 import os
-import subprocess
 import sys
 import tomllib
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from loguru import logger
 
-from harness import SRC_DIR, find_binary, start_log_tee
+from harness import SRC_DIR, find_binary, start_log_tee, stream_subprocess
 
 SCRIPT = Path(__file__).resolve()
 CARGO_CONFIG_TOML = SRC_DIR / "cargo_config.toml"
-
-
-def list_installed_crates(cargo: Path) -> set[str]:
-    completed = subprocess.run(
-        [str(cargo), "install", "--list"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return {
-        line.split()[0]
-        for line in completed.stdout.splitlines()
-        if line and not line[0].isspace() and line.rstrip().endswith(":")
-    }
-
-
-def install_or_upgrade(binstall: Path, name: str, installed: set[str]) -> None:
-    if name in installed:
-        logger.info(f"Upgrading {name} via cargo-binstall --force")
-        subprocess.run([str(binstall), "--force", "--no-confirm", name], check=True)
-    else:
-        logger.info(f"Installing {name} via cargo-binstall")
-        subprocess.run([str(binstall), "--no-confirm", name], check=True)
 
 
 def main() -> None:
@@ -74,14 +53,6 @@ def main() -> None:
             "~/.cargo and would land under /root if run as root."
         )
 
-    cargo = find_binary("cargo")
-    binstall = find_binary("cargo-binstall")
-    if not cargo or not binstall:
-        sys.exit(
-            "ERROR: cargo and cargo-binstall must be installed first. "
-            "Run ./src/install_from_urls.py."
-        )
-
     with CARGO_CONFIG_TOML.open("rb") as f:
         config = tomllib.load(f)
     requested = config.get("packages", [])
@@ -89,33 +60,33 @@ def main() -> None:
         logger.info(f"No `packages` entries in {CARGO_CONFIG_TOML}; nothing to do")
         return
 
-    log_file = start_log_tee(SCRIPT)
-    logger.info(f"Logging this run to {log_file}")
-    logger.info(f"Using cargo:          {cargo}")
-    logger.info(f"Using cargo-binstall: {binstall}")
-    logger.info(f"Running {len(requested)} crate(s) in parallel from {CARGO_CONFIG_TOML}")
+    start_log_tee()
 
-    installed = list_installed_crates(cargo)
-
-    failures: list[tuple[str, Exception]] = []
-    with ThreadPoolExecutor(max_workers=len(requested)) as pool:
-        pending = {
-            pool.submit(install_or_upgrade, binstall, name, installed): name
-            for name in requested
-        }
-        for future in as_completed(pending):
-            name = pending[future]
-            try:
-                future.result()
-            except Exception as exc:
-                failures.append((name, exc))
-                logger.error(f"{name} failed: {exc}")
-
-    if failures:
-        sys.exit(
-            f"{len(failures)} of {len(requested)} crate(s) failed: "
-            + ", ".join(name for name, _ in failures)
+    binstall = find_binary("cargo-binstall")
+    if not binstall:
+        cargo = find_binary("cargo")
+        if not cargo:
+            sys.exit(
+                "ERROR: cargo not found — run ./src/install_from_urls.py first "
+                "(rustup provides cargo)."
+            )
+        logger.info(
+            "cargo-binstall missing — bootstrapping via `cargo install` "
+            "(slow source compile; happens once per fresh system)"
         )
+        stream_subprocess([str(cargo), "install", "cargo-binstall"])
+        binstall = find_binary("cargo-binstall")
+        if not binstall:
+            sys.exit(
+                "ERROR: `cargo install cargo-binstall` succeeded but the binary "
+                "is not on PATH or in ~/.cargo/bin. Check cargo's install root."
+            )
+
+    logger.info(
+        f"Installing/upgrading {len(requested)} crate(s): {', '.join(requested)}"
+    )
+
+    stream_subprocess([str(binstall), "--no-confirm", *requested])
 
     logger.info("Done.")
 

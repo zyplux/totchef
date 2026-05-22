@@ -41,12 +41,6 @@ args = ["-y"]
 update_action = ["self", "update"]
 
 [[install]]
-name = "cargo-binstall"
-url = "https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh"
-bin = "cargo-binstall"
-update_action = "rerun-installer"
-
-[[install]]
 name = "herdr"
 url = "https://herdr.dev/install.sh"
 bin = "herdr"

@@ -26,7 +26,12 @@ from pathlib import Path
 from loguru import logger
 from toon_format import encode
 
-from harness import reexec_under_sudo, run, start_log_tee, write_if_changed
+from harness import (
+    reexec_under_sudo,
+    start_log_tee,
+    stream_subprocess,
+    write_if_changed,
+)
 
 SCRIPT = Path(__file__).resolve()
 FILES_DIR = SCRIPT.parent / "files"
@@ -59,45 +64,62 @@ GRUB_CMDLINE_RE = re.compile(
 def install_egpu_prime() -> None:
     changed = False
     changed |= write_if_changed(
-        EGPU_SWITCH_DST, EGPU_SWITCH_SRC.read_bytes(),
-        0o755, note="boot-time prime-select switch",
+        EGPU_SWITCH_DST,
+        EGPU_SWITCH_SRC.read_bytes(),
+        0o755,
+        note="boot-time prime-select switch",
     )
     changed |= write_if_changed(
-        EGPU_SERVICE_DST, EGPU_SERVICE_SRC.read_bytes(),
-        0o644, note="systemd unit, Before=display-manager",
+        EGPU_SERVICE_DST,
+        EGPU_SERVICE_SRC.read_bytes(),
+        0o644,
+        note="systemd unit, Before=display-manager",
     )
     if changed:
-        run("systemctl", "daemon-reload", note="systemctl daemon-reload")
+        stream_subprocess(
+            ["systemctl", "daemon-reload"], note="systemctl daemon-reload"
+        )
 
     enabled_state = subprocess.run(
         ["systemctl", "is-enabled", "egpu-prime.service"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     if enabled_state == "enabled":
         logger.info("egpu-prime.service already enabled")
     else:
-        run("systemctl", "enable", "egpu-prime.service",
-            note="enabling egpu-prime.service")
+        stream_subprocess(
+            ["systemctl", "enable", "egpu-prime.service"],
+            note="enabling egpu-prime.service",
+        )
+        changed = True
+    if changed:
+        logger.info(
+            "Reboot to let egpu-prime.service pick the PRIME mode before SDDM starts."
+        )
 
 
 def configure_nvidia_power() -> None:
     changed = write_if_changed(
-        NVIDIA_MODPROBE_DST, NVIDIA_MODPROBE_CONTENT, 0o644,
+        NVIDIA_MODPROBE_DST,
+        NVIDIA_MODPROBE_CONTENT,
+        0o644,
         note="NVIDIA suspend / runtime-PM options",
     )
     for svc in NVIDIA_SLEEP_SERVICES:
         state = subprocess.run(
             ["systemctl", "is-enabled", svc],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
         if state == "enabled":
             logger.info(f"{svc} already enabled")
         elif state in ("disabled", "alias", "indirect"):
-            run("systemctl", "enable", svc, note=f"enabling {svc}")
+            stream_subprocess(["systemctl", "enable", svc], note=f"enabling {svc}")
         else:
             logger.warning(f"{svc} skipped (state: {state or 'missing'})")
     if changed:
-        run("update-initramfs", "-u", note="update-initramfs -u")
+        stream_subprocess(["update-initramfs", "-u"], note="update-initramfs -u")
 
 
 def configure_grub_sleep() -> None:
@@ -112,10 +134,10 @@ def configure_grub_sleep() -> None:
         return
     params = [p for p in params if not p.startswith("mem_sleep_default=")]
     params.append(GRUB_SLEEP_PARAM)
-    new_line = f'{match.group(1)}{match.group(2)}{" ".join(params)}{match.group(2)}'
-    GRUB_FILE.write_text(text[:match.start()] + new_line + text[match.end():])
+    new_line = f"{match.group(1)}{match.group(2)}{' '.join(params)}{match.group(2)}"
+    GRUB_FILE.write_text(text[: match.start()] + new_line + text[match.end() :])
     logger.info(f"Writing  : {GRUB_FILE}  (added {GRUB_SLEEP_PARAM})")
-    run("update-grub", note="update-grub")
+    stream_subprocess(["update-grub"], note="update-grub")
 
 
 def build_gpu_state_row() -> dict:
@@ -134,18 +156,17 @@ def build_gpu_state_row() -> dict:
 def main() -> None:
     reexec_under_sudo(SCRIPT)
 
-    log_file = start_log_tee(SCRIPT)
-    logger.info(f"Logging this run to {log_file}")
+    start_log_tee()
 
     install_egpu_prime()
     configure_nvidia_power()
     configure_grub_sleep()
 
     logger.info("Current GPU state:")
-    print(encode([build_gpu_state_row()]))
+    for line in encode([build_gpu_state_row()]).splitlines():
+        logger.info(line)
 
     logger.info("Done.")
-    logger.info("Reboot to let egpu-prime.service pick the PRIME mode before SDDM starts.")
 
 
 if __name__ == "__main__":

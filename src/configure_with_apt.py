@@ -50,6 +50,7 @@ from harness import (
     reexec_under_sudo,
     run,
     start_log_tee,
+    stream_subprocess,
     write_if_changed,
 )
 
@@ -63,28 +64,31 @@ APT_CONFIG_TOML = SRC_DIR / "apt_config.toml"
 FILES_DIR = SRC_DIR / "files"
 
 
-def nala(*args: str, note: str = "", **kwargs) -> None:
-    run("nala", *args, note=note, **kwargs)
+def nala(*args: str, note: str = "", check: bool = True) -> None:
+    stream_subprocess(["nala", *args], note=note, check=check)
 
 
-def print_toon(rows: list[dict], note: str = "") -> None:
+def log_toon(rows: list[dict], note: str = "") -> None:
     if note:
         logger.info(note)
-    print(encode(rows))
+    for line in encode(rows).splitlines():
+        logger.info(line)
 
 
 def install_prereqs() -> None:
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run("apt-get", "update", note="Refreshing apt cache")
-    run(
-        "apt-get",
-        "install",
-        "-y",
-        "--no-install-recommends",
-        "curl",
-        "gnupg",
-        "ca-certificates",
-        "nala",
+    stream_subprocess(["apt-get", "update"], note="Refreshing apt cache")
+    stream_subprocess(
+        [
+            "apt-get",
+            "install",
+            "-y",
+            "--no-install-recommends",
+            "curl",
+            "gnupg",
+            "ca-certificates",
+            "nala",
+        ],
         note="Installing prerequisites",
     )
 
@@ -156,10 +160,8 @@ def ensure_trusted_gpgd_hardened() -> None:
     )
     if is_trusted_gpgd_immutable():
         return
-    run(
-        "chattr",
-        "+i",
-        str(TRUSTED_GPGD),
+    stream_subprocess(
+        ["chattr", "+i", str(TRUSTED_GPGD)],
         note=f"Setting immutable bit on {TRUSTED_GPGD}",
     )
     logger.info(
@@ -198,23 +200,18 @@ def apply_debconf_selections(selections: list[dict]) -> None:
         + ", ".join(s["package"] for s in selections)
     )
     payload = "\n".join(
-        f"{s['package']} {s['question']} {s['type']} {s['value']}"
-        for s in selections
+        f"{s['package']} {s['question']} {s['type']} {s['value']}" for s in selections
     )
-    run("debconf-set-selections", input=payload.encode())
+    stream_subprocess(["debconf-set-selections"], stdin=payload.encode())
 
 
 def install_repo_key(repo: dict, keyring: Path) -> None:
-    logger.info(f"Installing {repo['name']} GPG key to {keyring}")
-    keyring.parent.mkdir(parents=True, exist_ok=True)
     data = fetch_url(repo["key_url"])
     # ASCII-armored keys start with the RFC 4880 §6.2 header; binary OpenPGP
     # packets start with a high-bit-set tag byte and never match.
     if data.lstrip().startswith(b"-----BEGIN PGP"):
-        run("gpg", "--dearmor", "--yes", "-o", str(keyring), input=data)
-    else:
-        keyring.write_bytes(data)
-    keyring.chmod(0o644)
+        data = run("gpg", "--dearmor", input=data, capture_output=True).stdout
+    write_if_changed(keyring, data, note=f"{repo['name']} GPG key")
 
 
 def configure_repo(repo: dict, release: str) -> None:
@@ -246,11 +243,7 @@ def main() -> None:
 
     reexec_under_sudo(SCRIPT)
 
-    log_file = start_log_tee(SCRIPT)
-    logger.info(f"Logging this run to {log_file}")
-    logger.info(
-        f"Loaded config from {APT_CONFIG_TOML} ({len(repos)} repo(s), {len(packages)} package(s))"
-    )
+    start_log_tee()
 
     release = detect_release()
     logger.info(f"Detected release codename: {release}")
@@ -269,7 +262,7 @@ def main() -> None:
     nala("list", "--upgradable", note="Upgradable packages:", check=False)
 
     rows = [build_policy_row(p) for p in packages]
-    print_toon(
+    log_toon(
         rows,
         note="Verification — installed/candidate versions and effective pin priorities:",
     )
@@ -285,10 +278,8 @@ def main() -> None:
 
     nala("full-upgrade", "-y", note="Running nala full-upgrade")
 
-    run(
-        "lsattr",
-        "-d",
-        str(TRUSTED_GPGD),
+    stream_subprocess(
+        ["lsattr", "-d", str(TRUSTED_GPGD)],
         note=f"{TRUSTED_GPGD} attributes (expect 'i' set):",
     )
 

@@ -31,7 +31,6 @@ installs curl as a prereq) is a precondition.
 """
 
 import os
-import subprocess
 import sys
 import tomllib
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,7 +38,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from harness import SRC_DIR, fetch_url, find_binary, start_log_tee
+from harness import SRC_DIR, fetch_url, find_binary, start_log_tee, stream_subprocess
 
 SCRIPT = Path(__file__).resolve()
 URL_CONFIG_TOML = SRC_DIR / "url_config.toml"
@@ -47,51 +46,59 @@ URL_CONFIG_TOML = SRC_DIR / "url_config.toml"
 RERUN_INSTALLER = "rerun-installer"
 
 
-def run_installer(url: str, args: list[str]) -> None:
-    subprocess.run(["bash", "-s", "--", *args], input=fetch_url(url), check=True)
+def run_installer(url: str, args: list[str], tag: str, note: str) -> None:
+    stream_subprocess(
+        ["bash", "-s", "--", *args],
+        tag,
+        note=note,
+        stdin=fetch_url(url),
+    )
 
 
 def update_existing(
-    name: str,
     url: str,
     bin_path: Path,
     args: list[str],
     update_action: list[str] | str | None,
+    tag: str,
 ) -> None:
     if isinstance(update_action, list) and update_action:
-        logger.info(f"Updating {name} via `{bin_path.name} {' '.join(update_action)}`")
-        subprocess.run([str(bin_path), *update_action], check=True)
+        stream_subprocess(
+            [str(bin_path), *update_action],
+            tag,
+            note=f"Updating via `{bin_path.name} {' '.join(update_action)}`",
+        )
     elif update_action == RERUN_INSTALLER:
-        logger.info(f"Updating {name} by re-running installer from {url}")
-        run_installer(url, args)
+        run_installer(
+            url, args, tag, note=f"Updating by re-running installer from {url}"
+        )
     elif update_action is None:
-        logger.info(f"No update_action configured for {name}; leaving {bin_path} as-is")
+        logger.info(f"{tag} No update_action configured; leaving {bin_path} as-is")
     else:
         raise ValueError(
-            f"unrecognized update_action for {name}: {update_action!r} "
+            f"unrecognized update_action for {tag}: {update_action!r} "
             f"(expected a list of args, the string {RERUN_INSTALLER!r}, or absent)"
         )
 
 
 def install_from_url(
-    name: str,
     url: str,
     bin_name: str,
     args: list[str],
     update_action: list[str] | str | None,
+    tag: str,
 ) -> None:
     if existing := find_binary(bin_name):
-        update_existing(name, url, existing, args, update_action)
+        update_existing(url, existing, args, update_action, tag)
         return
 
-    logger.info(f"Installing {name} from {url}")
-    run_installer(url, args)
+    run_installer(url, args, tag, note=f"Installing from {url}")
 
     if found := find_binary(bin_name):
-        logger.info(f"Installed: {found}")
+        logger.info(f"{tag} Installed: {found}")
     else:
         logger.warning(
-            f"{bin_name} not found on PATH or in standard bootstrap dirs "
+            f"{tag} {bin_name} not found on PATH or in standard bootstrap dirs "
             "after install — vendor may use a non-standard path"
         )
 
@@ -110,20 +117,20 @@ def main() -> None:
         logger.info(f"No [[install]] blocks in {URL_CONFIG_TOML}; nothing to do")
         return
 
-    log_file = start_log_tee(SCRIPT)
-    logger.info(f"Logging this run to {log_file}")
-    logger.info(f"Running {len(installs)} install(s) in parallel from {URL_CONFIG_TOML}")
+    start_log_tee()
+    logger.info(f"Running {len(installs)} install(s) in parallel")
 
+    tag_width = max(len(block["name"]) for block in installs)
     failures: list[tuple[str, Exception]] = []
     with ThreadPoolExecutor(max_workers=len(installs)) as pool:
         pending = {
             pool.submit(
                 install_from_url,
-                block["name"],
                 block["url"],
                 block.get("bin", block["name"]),
                 block.get("args", []),
                 block.get("update_action"),
+                f"[{block['name']:>{tag_width}}]",
             ): block["name"]
             for block in installs
         }

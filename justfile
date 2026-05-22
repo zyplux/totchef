@@ -1,4 +1,14 @@
-up: _prime-sudo urls cargo uv apt gpu apps
+up:
+    #!/usr/bin/env bash
+    set -e
+    export SYS_CONF_PY_LOG_FILE="${SYS_CONF_PY_LOG_FILE:-{{justfile_directory()}}/logs/sys-conf-py-$(date +%Y%m%d-%H%M%S).log}"
+    just _prime-sudo
+    just urls
+    just cargo
+    just uv
+    just apt
+    just gpu
+    just apps
 
 _prime-sudo:
     sudo -v
@@ -20,3 +30,10 @@ gpu:
 
 apps:
     ./src/configure_apps.py
+
+lint:
+    ruff check --fix
+    ruff format
+
+tc: lint
+    uvx pyright src

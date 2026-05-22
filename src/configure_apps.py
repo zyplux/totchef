@@ -320,12 +320,9 @@ def main() -> None:
 
     reexec_under_sudo(SCRIPT)
 
-    log_file = start_log_tee(SCRIPT)
-    logger.info(f"Logging this run to {log_file}")
-    logger.info(f"Loaded config from {APPS_CONFIG_TOML}")
+    start_log_tee()
 
     sudo_user, uid, gid, home = get_invoking_user()
-    logger.info(f"Acting on behalf of {sudo_user}  (uid={uid}, home={home})")
 
     # Per-app sections are identified by carrying at least one dispatch marker key.
     # Everything else (env, [chromium], future scalars) is filtered out here.

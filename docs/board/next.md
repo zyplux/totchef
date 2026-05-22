@@ -21,3 +21,4 @@
 - we should also be able to run everything with --list flag to just show the current state of every item (version or information)
 - generate the unified install.toml first and confirm it with user prior to making python refactor
 - overall this tool should become a universal recipe runner similar to the ansible
+- ensure zero regression vs current implementation
