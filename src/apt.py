@@ -5,10 +5,11 @@ bootstrap and ongoing daily-driver maintenance. Actions run through nala
 (parallel downloads + `nala history undo` for rollback); nala is
 bootstrapped via apt-get on the first run.
 
-Config in apt_config.toml:
-  packages       installed at the end of the run
-  [ubuntu_pin]   uprank Ubuntu archives ({release} interpolated)
-  [[repo]]       one block per third-party apt repo
+Driven by the [apt] section of install.toml:
+  packages              installed at the end of the run
+  [apt.ubuntu_pin]      uprank Ubuntu archives ({release} interpolated)
+  [apt.repo.<name>]     one subtable per third-party apt repo
+  [apt.debconf.<key>]   debconf-set-selections entries
 
 Repos use the modern layout: GPG key outside /etc/apt/trusted.gpg.d/ +
 .sources with `Signed-By:` so each key only authorises its own repo.
@@ -32,7 +33,6 @@ import os
 import platform
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -42,6 +42,7 @@ from toon_format import encode
 from harness import (
     SRC_DIR,
     fetch_url,
+    load_section,
     reexec_under_sudo,
     run,
     start_log_tee,
@@ -55,7 +56,6 @@ TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
 TRUSTED_GPGD_HOOK = Path("/etc/apt/apt.conf.d/99-trusted-gpgd-autounlock")
 
 SCRIPT = Path(__file__).resolve()
-APT_CONFIG_TOML = SRC_DIR / "apt_config.toml"
 FILES_DIR = SRC_DIR / "files"
 
 
@@ -200,20 +200,19 @@ def apply_debconf_selections(selections: list[dict]) -> None:
     stream_subprocess(["debconf-set-selections"], stdin=payload.encode())
 
 
-def install_repo_key(repo: dict, keyring: Path) -> None:
-    data = fetch_url(repo["key_url"])
+def install_repo_key(name: str, key_url: str, keyring: Path) -> None:
+    data = fetch_url(key_url)
     # ASCII-armored keys start with the RFC 4880 §6.2 header; binary OpenPGP
     # packets start with a high-bit-set tag byte and never match.
     if data.lstrip().startswith(b"-----BEGIN PGP"):
         data = run("gpg", "--dearmor", input=data, capture_output=True).stdout
-    write_if_changed(keyring, data, note=f"{repo['name']} GPG key")
+    write_if_changed(keyring, data, note=f"{name} GPG key")
 
 
-def configure_repo(repo: dict, release: str) -> None:
-    name = repo["name"]
+def configure_repo(name: str, repo: dict, release: str) -> None:
     keyring = Path(repo.get("keyring", f"/usr/share/keyrings/{name}.gpg"))
     source = Path(repo.get("source_path", f"/etc/apt/sources.list.d/{name}.sources"))
-    install_repo_key(repo, keyring)
+    install_repo_key(name, repo["key_url"], keyring)
     lines = [
         "Types: deb",
         f"URIs: {repo['uris']}",
@@ -230,11 +229,12 @@ def configure_repo(repo: dict, release: str) -> None:
 
 
 def main() -> None:
-    # Load config pre-sudo so TOML errors surface before the sudo re-exec.
-    with APT_CONFIG_TOML.open("rb") as f:
-        config = tomllib.load(f)
-    repos = config.get("repo", [])
-    packages = config.get("packages", [])
+    # Load slice pre-sudo so a missing-env or JSON error surfaces before the sudo prompt.
+    section = load_section()
+    repos = section.get("repo", {})
+    packages = section.get("packages", [])
+    debconf = section.get("debconf", {})
+    ubuntu_pin = section["ubuntu_pin"]
 
     reexec_under_sudo(SCRIPT)
 
@@ -244,13 +244,13 @@ def main() -> None:
     logger.info(f"Detected release codename: {release}")
 
     ensure_trusted_gpgd_hardened()
-    write_ubuntu_pin(config["ubuntu_pin"], release)
-    apply_debconf_selections(config.get("debconf", []))
+    write_ubuntu_pin(ubuntu_pin, release)
+    apply_debconf_selections(list(debconf.values()))
 
     install_prereqs()
 
-    for repo in repos:
-        configure_repo(repo, release)
+    for name, repo in repos.items():
+        configure_repo(name, repo, release)
 
     nala("update", note="Refreshing apt cache with new repos")
     # `nala list --upgradable` exits 1 when nothing matches (grep convention).
@@ -268,7 +268,7 @@ def main() -> None:
             f"ERROR: package(s) not available in any configured repo: {', '.join(missing)}\n"
             "  - Check release-specific naming (e.g. libva-nvidia-driver -> nvidia-vaapi-driver on Ubuntu 26.04+).\n"
             "  - Confirm the package's component is enabled (main / universe / multiverse / restricted).\n"
-            "  - For a third-party package, confirm its [[repo]] block is in apt_config.toml."
+            "  - For a third-party package, confirm its [apt.repo.<name>] subtable is in install.toml."
         )
 
     nala("full-upgrade", "-y", note="Running nala full-upgrade")

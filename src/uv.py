@@ -1,7 +1,7 @@
 """
-Idempotent uv-tool installer/updater driven by uv_config.toml.
+Idempotent uv-tool installer/updater driven by the [uv] section of install.toml.
 
-For each entry in `packages`:
+For each entry in [uv].packages:
   not installed -> `uv tool install <pkg>`
   installed     -> `uv tool upgrade <pkg>`
 
@@ -12,7 +12,7 @@ executables indented (`- <bin>`) below.
 Packages are processed concurrently via a thread pool; uv serializes
 conflicting filesystem work internally with its own locks.
 
-Requires uv to be installed first; run ./src/install_from_urls.py if missing.
+Requires uv to be installed first — bash.py must run first.
 
 Runs as the invoking user — uv writes into ~/.local/share/uv and ~/.local/bin,
 so the script refuses to run as root.
@@ -21,16 +21,14 @@ so the script refuses to run as root.
 import os
 import subprocess
 import sys
-import tomllib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from loguru import logger
 
-from harness import SRC_DIR, find_binary, start_log_tee, stream_subprocess
+from harness import find_binary, load_section, start_log_tee, stream_subprocess
 
 SCRIPT = Path(__file__).resolve()
-UV_CONFIG_TOML = SRC_DIR / "uv_config.toml"
 
 
 def list_installed_tools(uv: Path) -> set[str]:
@@ -66,13 +64,12 @@ def main() -> None:
 
     uv = find_binary("uv")
     if not uv:
-        sys.exit("ERROR: uv must be installed first. Run ./src/install_from_urls.py.")
+        sys.exit("ERROR: uv must be installed first; [bash] must run before [uv].")
 
-    with UV_CONFIG_TOML.open("rb") as f:
-        config = tomllib.load(f)
-    requested = config.get("packages", [])
+    section = load_section()
+    requested = section.get("packages", [])
     if not requested:
-        logger.info(f"No `packages` entries in {UV_CONFIG_TOML}; nothing to do")
+        logger.info("No [uv].packages entries in install.toml; nothing to do")
         return
 
     start_log_tee()

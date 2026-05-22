@@ -1,5 +1,5 @@
 """
-Idempotent cargo installer/updater driven by cargo_config.toml.
+Idempotent cargo installer/updater driven by the [cargo] section of install.toml.
 
 Hands every requested crate to a single `cargo binstall --no-confirm pkg1 pkg2 ...`
 call. cargo-binstall resolves each crate's latest release, compares against the
@@ -19,10 +19,9 @@ problem — see logs/sys-conf-py-*.log for context.
 
 Bootstraps cargo-binstall via `cargo install cargo-binstall` if it isn't
 already on disk. That's a slow source compile, but only happens once per
-fresh system; thereafter cargo-binstall is in cargo_config.toml's package
-list and updates itself in the same batch as everything else (version-
-aware, ~1s). Requires cargo (from rustup) — run ./src/install_from_urls.py
-first if cargo is missing.
+fresh system; thereafter cargo-binstall is in [cargo].packages and updates
+itself in the same batch as everything else (version-aware, ~1s). Requires
+cargo (from rustup) — bash.py must run first.
 
 Runs as the invoking user — cargo writes into ~/.cargo, so the script refuses
 to run as root (toolchains would land under /root otherwise).
@@ -30,15 +29,13 @@ to run as root (toolchains would land under /root otherwise).
 
 import os
 import sys
-import tomllib
 from pathlib import Path
 
 from loguru import logger
 
-from harness import SRC_DIR, find_binary, start_log_tee, stream_subprocess
+from harness import find_binary, load_section, start_log_tee, stream_subprocess
 
 SCRIPT = Path(__file__).resolve()
-CARGO_CONFIG_TOML = SRC_DIR / "cargo_config.toml"
 
 
 def main() -> None:
@@ -48,11 +45,10 @@ def main() -> None:
             "~/.cargo and would land under /root if run as root."
         )
 
-    with CARGO_CONFIG_TOML.open("rb") as f:
-        config = tomllib.load(f)
-    requested = config.get("packages", [])
+    section = load_section()
+    requested = section.get("packages", [])
     if not requested:
-        logger.info(f"No `packages` entries in {CARGO_CONFIG_TOML}; nothing to do")
+        logger.info("No [cargo].packages entries in install.toml; nothing to do")
         return
 
     start_log_tee()
@@ -62,8 +58,7 @@ def main() -> None:
         cargo = find_binary("cargo")
         if not cargo:
             sys.exit(
-                "ERROR: cargo not found — run ./src/install_from_urls.py first "
-                "(rustup provides cargo)."
+                "ERROR: cargo not found — [bash] must run first (rustup provides cargo)."
             )
         logger.info(
             "cargo-binstall missing — bootstrapping via `cargo install` "

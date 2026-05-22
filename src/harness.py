@@ -1,26 +1,8 @@
-"""Shared execution scaffolding for sys-conf-py playbook scripts.
-
-The playbooks share a common shape: re-exec under sudo when needed, tee
-stdout/stderr to a per-run log under logs/, and idempotently write system
-files. This module owns the plumbing so each playbook can focus on what
-it configures. main.py spawns the playbooks as subprocesses under the
-project venv's python (uv-managed); harness.py is imported into each.
-
-Exports:
-  SRC_DIR              this module's directory (also where the playbook scripts live)
-  REPO_ROOT            repo root (parent of src/)
-  LOG_DIR              repo_root/logs — where per-run logs land
-  BOOTSTRAP_BIN_DIRS   per-user dirs vendor installers write into
-  reexec_under_sudo()  re-exec the calling script under sudo if not root
-  start_log_tee()      tee stdout+stderr into the shared per-run log
-  get_invoking_user()  resolve SUDO_USER → (name, uid, gid, home)
-  run()                subprocess.run with optional pre-log of the action
-  stream_subprocess()  run subprocess; stream merged stdout/stderr tagged per line
-  write_if_changed()   write file only when contents differ (returns bool)
-  find_binary()        locate executable via PATH or known bootstrap dirs
-  fetch_url()          HTTP GET that survives vendor UA gates (Signal, herdr, …)
+"""Shared scaffolding for sys-conf-py loaders: sudo re-exec, log teeing,
+streamed subprocess wrapping, idempotent file writes, binary discovery.
 """
 
+import json
 import os
 import pwd
 import shutil
@@ -36,14 +18,17 @@ from loguru import logger
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 LOG_DIR = REPO_ROOT / "logs"
+INSTALL_TOML = SRC_DIR / "install.toml"
 
 LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <22} {level: <7} {message}"
 
 SHARED_LOG_ENV = "SYS_CONF_PY_LOG_FILE"
+SECTION_ENV = "SYS_CONF_PY_SECTION_JSON"
 
-# Configured at import so the pre-sudo "Re-running under sudo" message is also
-# timestamped (execvp re-imports this module in the elevated process, which
-# re-resolves sys.argv[0] and re-binds the runner name in the elevated logger).
+# sysexits.h EX_TEMPFAIL: loader -> main.py signal for recoverable failure.
+SOFT_FAIL_EXIT = 75
+
+# Configured at import so pre-sudo messages get timestamped too.
 logger.remove()
 logger.configure(extra={"runner": Path(sys.argv[0]).stem})
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
@@ -56,7 +41,7 @@ def reexec_under_sudo(script: Path) -> None:
             "sudo",
             [
                 "sudo",
-                f"--preserve-env={SHARED_LOG_ENV}",
+                f"--preserve-env={SHARED_LOG_ENV},{SECTION_ENV}",
                 sys.executable,
                 str(script),
                 *sys.argv[1:],
@@ -64,20 +49,20 @@ def reexec_under_sudo(script: Path) -> None:
         )
 
 
+def load_section() -> dict:
+    """Read the install.toml slice main.py passed us via SECTION_ENV."""
+    payload = os.environ.get(SECTION_ENV)
+    if payload is None:
+        sys.exit(
+            f"ERROR: {SECTION_ENV} not set; run via `just up`, not this loader directly."
+        )
+    return json.loads(payload)
+
+
 def start_log_tee() -> Path:
-    """Tee stdout/stderr into the shared per-run log under logs/.
-
-    If SYS_CONF_PY_LOG_FILE is set (the `just up` umbrella exports it from
-    one bash shell so every script it execs inherits it), append to that
-    file — the whole run lands in one log. Otherwise (a direct script
-    invocation like `./src/configure_gpu.py`), create a fresh
-    sys-conf-py-<timestamp>.log and export it so any sudo re-exec inherits
-    it via --preserve-env.
-
-    Pre-chowning to SUDO_USER lets root-written content keep the original
-    owner — tee runs as root post-sudo but only appends to an already-owned
-    file.
-    """
+    """Tee stdout/stderr into logs/<run>.log. Honors SHARED_LOG_ENV if set,
+    else creates a timestamped file and exports it. Pre-chowns to SUDO_USER
+    so root-written lines keep the original owner."""
     LOG_DIR.mkdir(exist_ok=True)
     if existing := os.environ.get(SHARED_LOG_ENV):
         log_file = Path(existing)
@@ -121,23 +106,10 @@ def stream_subprocess(
     stdin: bytes | None = None,
     check: bool = True,
 ) -> None:
-    """Run `cmd` and stream merged stdout/stderr line-by-line through
-    logger.info. If `tag` is set, prepend it to each line (and to the
-    optional `note` header) so parallel callers stay attributable. If
-    `note` is given, log it before the subprocess starts — saves an
-    extra logger.info at the call site. Raises CalledProcessError on
-    non-zero exit unless `check=False`. A daemon thread feeds `stdin`
-    if provided so large inputs don't deadlock against a blocked stdout
-    buffer.
-
-    TERM=dumb / NO_COLOR=1 / start_new_session=True together discourage
-    ANSI/progress prettification and block /dev/tty bypass (some tools
-    open /dev/tty to keep writing to the terminal even when stdout is
-    piped; detaching from the controlling tty makes that open fail back
-    to the captured pipe). CR-based overwrites inside a chunk are split
-    per-frame so each becomes its own prefixed log line instead of
-    mashing into one.
-    """
+    """Run `cmd`, stream merged stdout/stderr line-by-line through logger.info,
+    optionally tagged per line. Raises CalledProcessError on non-zero unless
+    check=False. TERM=dumb + NO_COLOR + start_new_session suppress ANSI and
+    block /dev/tty bypass; CR-splits become separate log lines."""
     prefix = f"{tag} " if tag else ""
     if note:
         logger.info(f"{prefix}{note}")
@@ -202,13 +174,8 @@ BOOTSTRAP_BIN_DIRS = (
 
 
 def find_binary(name: str) -> Path | None:
-    """Resolve `name` to an absolute path via PATH first, then known per-user
-    bootstrap dirs (vendor installers like rustup, bun, uv land here without
-    necessarily being on PATH yet). Returns None if not found.
-
-    Path.home() is read at module import — only call from scripts that run as
-    the invoking user, not after a sudo re-exec (where HOME flips to /root).
-    """
+    """PATH first, then BOOTSTRAP_BIN_DIRS (rustup/bun/uv land here pre-PATH).
+    Don't call after sudo re-exec — Path.home() was resolved at import."""
     if found := shutil.which(name):
         return Path(found)
     for d in BOOTSTRAP_BIN_DIRS:
@@ -222,12 +189,7 @@ USER_AGENT = "sys-conf-py"
 
 
 def fetch_url(url: str) -> bytes:
-    """HTTP GET `url`, return the response body as bytes.
-
-    Identifies as `sys-conf-py` rather than the urllib default — vendor CDNs
-    behind WAFs (Signal's repo, herdr.dev's installer, likely others) 403 the
-    literal `Python-urllib/*` UA but accept any non-default identifier.
-    """
+    """HTTP GET. Custom UA — Signal/herdr CDNs 403 the urllib default."""
     request = Request(url, headers={"User-Agent": USER_AGENT})
     with urlopen(request) as response:
         return response.read()
