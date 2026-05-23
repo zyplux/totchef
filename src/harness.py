@@ -9,11 +9,32 @@ import shutil
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from urllib.request import Request, urlopen
 
 from loguru import logger
+
+
+@dataclass(frozen=True)
+class Result:
+    status: Literal["ok", "soft_fail", "hard_fail"]
+    message: str
+    changed: bool
+
+
+@dataclass(frozen=True)
+class VersionInfo:
+    name: str
+    installed_version: str
+    available_version: str
+    source: str
+    status: Literal["installed", "needs_update", "missing", "unknown"]
+    cook: str
+    manager: str
+
 
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent

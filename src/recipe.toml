@@ -26,6 +26,15 @@
 #                  the server process actually exits — so the one-liner stops
 #                  AND polls `herdr status server` until "not running".
 
+# ---------------------------------------------------------------------------
+# Scheduling metadata (read by chef.py):
+#   needs_root  bool, default false — chef spawns via sudo when true
+#   depends_on  list of section names, default [] — drives topo ordering
+# ---------------------------------------------------------------------------
+[bash]
+needs_root = false
+depends_on = []
+
 [bash.bun]
 url = "https://bun.sh/install"
 update_action = ["upgrade"]
@@ -56,6 +65,8 @@ url = "https://antigravity.google/cli/install.sh"
 # ---------------------------------------------------------------------------
 
 [cargo]
+needs_root = false
+depends_on = ["bash"]
 packages = [
     "cargo-binstall",
     "cargo-update",
@@ -69,6 +80,8 @@ packages = [
 # ---------------------------------------------------------------------------
 
 [uv]
+needs_root = false
+depends_on = ["bash"]
 packages = [
     "ruff",
 ]
@@ -78,6 +91,8 @@ packages = [
 # ---------------------------------------------------------------------------
 
 [apt]
+needs_root = true
+depends_on = []
 packages = [
     "just",
     "ghostty",
