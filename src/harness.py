@@ -1,5 +1,6 @@
-"""Shared scaffolding for sys-conf-py cooks: sudo re-exec, log teeing,
-streamed subprocess wrapping, idempotent file writes, binary discovery.
+"""Shared scaffolding for sys-conf-py cooks: log teeing, streamed subprocess
+wrapping, idempotent file writes, TOON logging, binary discovery. Sudo
+elevation is owned by chef.py now, so cooks no longer self-elevate.
 """
 
 import json
@@ -14,6 +15,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from loguru import logger
+from toon_format import encode
 
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
@@ -73,6 +75,14 @@ def get_invoking_user() -> tuple[str, int, int, Path]:
         sys.exit("ERROR: SUDO_USER not set; run via sudo, not as root directly.")
     pw = pwd.getpwnam(sudo_user)
     return sudo_user, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
+
+
+def log_toon(rows: list[dict], note: str = "") -> None:
+    """Log a list of flat dicts as a TOON table, one logger line per row line."""
+    if note:
+        logger.info(note)
+    for line in encode(rows).splitlines():
+        logger.info(line)
 
 
 def run(

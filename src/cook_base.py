@@ -24,9 +24,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from loguru import logger
-from toon_format import encode
 
-from harness import SOFT_FAIL_EXIT, load_section, start_log_tee
+from harness import SOFT_FAIL_EXIT, load_section, log_toon, start_log_tee
 
 Status = Literal["ok", "soft_fail", "hard_fail"]
 VersionStatus = Literal["installed", "needs_update", "missing", "unknown"]
@@ -102,8 +101,7 @@ def _print_versions(cook: CookBase) -> None:
     if not rows:
         logger.info("No version information to report.")
         return
-    for line in encode(rows).splitlines():
-        logger.info(line)
+    log_toon(rows)
 
 
 def main_for(cls: type[CookBase]) -> None:

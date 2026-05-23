@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tomllib
 from datetime import datetime
-from graphlib import TopologicalSorter
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 
 from harness import LOG_DIR, RECIPE_TOML, SECTION_ENV, SHARED_LOG_ENV, SOFT_FAIL_EXIT
@@ -52,7 +52,10 @@ def plan_order(config: dict) -> list[str]:
     sorter: TopologicalSorter[str] = TopologicalSorter()
     for section, data in config.items():
         sorter.add(section, *data.get("depends_on", []))
-    return list(sorter.static_order())
+    try:
+        return list(sorter.static_order())
+    except CycleError as exc:
+        sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
 
 
 def run_cook(section: str, config: dict) -> int:

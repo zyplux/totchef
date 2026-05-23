@@ -23,23 +23,15 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from loguru import logger
-from toon_format import encode
 
 from cook_base import CookBase, Result, VersionInfo, VersionStatus, main_for
-from harness import stream_subprocess
+from harness import log_toon, stream_subprocess
 
 TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
 
 
 def nala(*args: str, note: str = "", check: bool = True) -> None:
     stream_subprocess(["nala", *args], note=note, check=check)
-
-
-def log_toon(rows: list[dict], note: str = "") -> None:
-    if note:
-        logger.info(note)
-    for line in encode(rows).splitlines():
-        logger.info(line)
 
 
 def build_policy_row(package: str) -> dict:
