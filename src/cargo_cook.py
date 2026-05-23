@@ -21,65 +21,109 @@ Bootstraps cargo-binstall via `cargo install cargo-binstall` if it isn't
 already on disk. That's a slow source compile, but only happens once per
 fresh system; thereafter cargo-binstall is in [cargo].packages and updates
 itself in the same batch as everything else (version-aware, ~1s). Requires
-cargo (from rustup) — bash_cook.py must run first.
+cargo (from rustup) — the [url] section installs it, so [cargo] declares
+`depends_on = ["url"]`.
 
-Runs as the invoking user — cargo writes into ~/.cargo, so the script refuses
+Runs as the invoking user — cargo writes into ~/.cargo, so the cook refuses
 to run as root (toolchains would land under /root otherwise).
 """
 
-import os
-import sys
+import subprocess
 from pathlib import Path
 
 from loguru import logger
 
-from harness import find_binary, load_section, start_log_tee, stream_subprocess
+from cook_base import CookBase, Result, VersionInfo, main_for
+from harness import find_binary, stream_subprocess
 
-SCRIPT = Path(__file__).resolve()
+
+def parse_installed_crates() -> dict[str, str]:
+    """Map crate name -> version from `cargo install --list`. Each crate is
+    announced by a column-0 line `<name> v<version>:`; binaries are indented."""
+    cargo = find_binary("cargo")
+    if not cargo:
+        return {}
+    completed = subprocess.run(
+        [str(cargo), "install", "--list"], capture_output=True, text=True
+    )
+    versions: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        if not line or line[0].isspace():
+            continue
+        tokens = line.rstrip(":").split()
+        if len(tokens) >= 2 and tokens[1].startswith("v"):
+            versions[tokens[0]] = tokens[1].lstrip("v")
+    return versions
 
 
-def main() -> None:
-    if os.geteuid() == 0:
-        sys.exit(
-            "ERROR: run as the invoking user (not root) — cargo writes into "
-            "~/.cargo and would land under /root if run as root."
-        )
+class CargoCook(CookBase):
+    needs_root = False
+    manager = "cargo-binstall"
+    user_only_reason = "cargo writes into ~/.cargo"
 
-    section = load_section()
-    requested = section.get("packages", [])
-    if not requested:
-        logger.info("No [cargo].packages entries in recipe.toml; nothing to do")
-        return
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        self.requested: list[str] = section.get("packages", [])
 
-    start_log_tee()
-
-    binstall = find_binary("cargo-binstall")
-    if not binstall:
+    def _ensure_binstall(self) -> Path | None:
+        if binstall := find_binary("cargo-binstall"):
+            return binstall
         cargo = find_binary("cargo")
         if not cargo:
-            sys.exit(
-                "ERROR: cargo not found — [bash] must run first (rustup provides cargo)."
-            )
+            return None
         logger.info(
             "cargo-binstall missing — bootstrapping via `cargo install` "
             "(slow source compile; happens once per fresh system)"
         )
         stream_subprocess([str(cargo), "install", "cargo-binstall"])
-        binstall = find_binary("cargo-binstall")
-        if not binstall:
-            sys.exit(
-                "ERROR: `cargo install cargo-binstall` succeeded but the binary "
-                "is not on PATH or in ~/.cargo/bin. Check cargo's install root."
+        return find_binary("cargo-binstall")
+
+    def install_or_update(self) -> Result:
+        if not self.requested:
+            return Result(
+                "ok", "No [cargo].packages entries in recipe.toml; nothing to do"
             )
 
-    logger.info(
-        f"Installing/upgrading {len(requested)} crate(s): {', '.join(requested)}"
-    )
+        if not find_binary("cargo"):
+            return Result(
+                "hard_fail",
+                "cargo not found — the [url] section (rustup) must run before [cargo].",
+            )
 
-    stream_subprocess([str(binstall), "--no-confirm", *requested])
+        binstall = self._ensure_binstall()
+        if not binstall:
+            return Result(
+                "hard_fail",
+                "cargo-binstall is not on PATH or in ~/.cargo/bin after bootstrap. "
+                "Check cargo's install root.",
+            )
 
-    logger.info("Done.")
+        logger.info(
+            f"Installing/upgrading {len(self.requested)} crate(s): "
+            + ", ".join(self.requested)
+        )
+        stream_subprocess([str(binstall), "--no-confirm", *self.requested])
+        logger.info("Done.")
+        return Result("ok", changed=True)
+
+    def show_version(self) -> list[VersionInfo]:
+        versions = parse_installed_crates()
+        rows: list[VersionInfo] = []
+        for name in self.requested:
+            installed = versions.get(name)
+            rows.append(
+                VersionInfo(
+                    name=name,
+                    installed_version=installed or "(none)",
+                    available_version="unknown",
+                    source="crates.io",
+                    status="installed" if installed else "missing",
+                    cook=self.cook_name,
+                    manager=self.manager,
+                )
+            )
+        return rows
 
 
 if __name__ == "__main__":
-    main()
+    main_for(CargoCook)

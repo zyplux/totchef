@@ -27,11 +27,9 @@ from loguru import logger
 from harness import (
     SRC_DIR,
     get_invoking_user,
-    reexec_under_sudo,
     start_log_tee,
 )
 
-SCRIPT = Path(__file__).resolve()
 APPS_CONFIG_TOML = SRC_DIR / "apps_config.toml"
 
 
@@ -93,7 +91,7 @@ def write_desktop_override(
     if not system_desktop.exists():
         logger.warning(
             f"{system_desktop} not found; skipping .desktop override "
-            "(install package via apt_cook.py first)"
+            "(install package via the [apt_pkg] cook first)"
         )
         return False
 
@@ -312,8 +310,6 @@ def refresh_kde_cache(sudo_user: str) -> None:
 def main() -> None:
     with APPS_CONFIG_TOML.open("rb") as f:
         config = tomllib.load(f)
-
-    reexec_under_sudo(SCRIPT)
 
     start_log_tee()
 

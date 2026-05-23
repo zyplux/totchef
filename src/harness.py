@@ -34,21 +34,6 @@ logger.configure(extra={"runner": Path(sys.argv[0]).stem})
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
 
 
-def reexec_under_sudo(script: Path) -> None:
-    if os.geteuid() != 0:
-        logger.info("Re-running under sudo")
-        os.execvp(
-            "sudo",
-            [
-                "sudo",
-                f"--preserve-env={SHARED_LOG_ENV},{SECTION_ENV}",
-                sys.executable,
-                str(script),
-                *sys.argv[1:],
-            ],
-        )
-
-
 def load_section() -> dict:
     """Read the recipe.toml slice chef.py passed us via SECTION_ENV."""
     payload = os.environ.get(SECTION_ENV)

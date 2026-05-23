@@ -16,9 +16,9 @@ After reboot, the egpu-prime service runs before SDDM and picks
 
 | File | Purpose |
 |---|---|
-| `src/recipe.toml` | unified declarative config: `[bash.<cli>]` vendor URL installers, `[cargo]`/`[uv]` package lists, `[apt]` packages + repos + pinning + debconf. Each top-level section drives `src/<section>_cook.py`. |
+| `src/recipe.toml` | unified declarative config: `[url.<cli>]` vendor installers, `[cargo]`/`[uv]` package lists, `[bash.<name>]` idempotent shell snippets, `[apt_repo.<name>]` repos, `[apt_pkg]` packages, `[configure_gpu]`/`[configure_apps]`. Each top-level section drives `src/<section>_cook.py` (or `src/<section>.py`) and declares `needs_root` + `depends_on`; chef topo-sorts and owns sudo. |
 | `src/apps_config.toml` | Shared `[env]`; one section per app, dispatched on marker keys: `desktop` (launcher override + flags via `features`/`switches`), `local_state` (Chromium Local State flags), `argv_json` (Electron argv.json), `settings_json` (JSON settings file with `settings_env` block, e.g. Claude Code) |
-| `src/files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
+| `src/files/` | static assets installed verbatim (egpu-prime switch + systemd unit) |
 | `logs/` | timestamped per-run log (chowned to invoking user) |
 
 Edit `recipe.toml` (or `apps_config.toml`), re-run `just up`. Cooks only

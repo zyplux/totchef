@@ -12,100 +12,121 @@ executables indented (`- <bin>`) below.
 Packages are processed concurrently via a thread pool; uv serializes
 conflicting filesystem work internally with its own locks.
 
-Requires uv to be installed first — bash_cook.py must run first.
+Requires uv to be installed first — the [url] section installs it, so [uv]
+declares `depends_on = ["url"]`.
 
 Runs as the invoking user — uv writes into ~/.local/share/uv and ~/.local/bin,
-so the script refuses to run as root.
+so the cook refuses to run as root.
 """
 
-import os
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from loguru import logger
 
-from harness import find_binary, load_section, start_log_tee, stream_subprocess
+from cook_base import CookBase, Result, VersionInfo, main_for
+from harness import find_binary, stream_subprocess
 
-SCRIPT = Path(__file__).resolve()
 
-
-def list_installed_tools(uv: Path) -> set[str]:
-    """Tool names from `uv tool list`. Each tool is announced by a column-0
-    line `<name> v<version>`; executable lines below it start with `- ` and
-    are ignored."""
+def parse_tool_versions(uv: Path) -> dict[str, str]:
+    """Map tool name -> version from `uv tool list`. Each tool is announced by
+    a column-0 line `<name> v<version>`; indented `- <bin>` lines are skipped."""
     completed = subprocess.run(
         [str(uv), "tool", "list"],
         capture_output=True,
         text=True,
         check=True,
     )
-    return {
-        line.split()[0]
-        for line in completed.stdout.splitlines()
-        if line and not line[0].isspace() and not line.startswith("-")
-    }
+    versions: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        if not line or line[0].isspace() or line.startswith("-"):
+            continue
+        tokens = line.split()
+        versions[tokens[0]] = tokens[1].lstrip("v") if len(tokens) > 1 else "unknown"
+    return versions
 
 
-def install_or_upgrade(uv: Path, name: str, installed: set[str], tag: str) -> None:
-    action, verb = (
-        ("Upgrading", "upgrade") if name in installed else ("Installing", "install")
-    )
-    stream_subprocess([str(uv), "tool", verb, name], tag, note=action)
+class UvCook(CookBase):
+    needs_root = False
+    manager = "uv"
+    user_only_reason = "uv writes into ~/.local/share/uv and ~/.local/bin"
 
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        self.requested: list[str] = section.get("packages", [])
 
-def main() -> None:
-    if os.geteuid() == 0:
-        sys.exit(
-            "ERROR: run as the invoking user (not root) — uv writes into "
-            "~/.local and would land under /root if run as root."
+    def _find_uv(self) -> Path | None:
+        return find_binary("uv")
+
+    def install_or_update(self) -> Result:
+        if not self.requested:
+            return Result(
+                "ok", "No [uv].packages entries in recipe.toml; nothing to do"
+            )
+
+        uv = self._find_uv()
+        if not uv:
+            return Result(
+                "hard_fail",
+                "uv must be installed first; the [url] section must run before [uv].",
+            )
+
+        logger.info(f"Running {len(self.requested)} uv tool(s) in parallel")
+        installed = set(parse_tool_versions(uv))
+        tag_width = max(len(name) for name in self.requested)
+
+        failures: list[str] = []
+        with ThreadPoolExecutor(max_workers=len(self.requested)) as pool:
+            pending = {
+                pool.submit(self._install_one, uv, name, installed, tag_width): name
+                for name in self.requested
+            }
+            for future in as_completed(pending):
+                name = pending[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    failures.append(name)
+                    logger.error(f"{name} failed: {exc}")
+
+        if failures:
+            return Result(
+                "hard_fail",
+                f"{len(failures)} of {len(self.requested)} uv tool(s) failed: "
+                + ", ".join(failures),
+            )
+        logger.info("Done.")
+        return Result("ok", changed=True)
+
+    @staticmethod
+    def _install_one(uv: Path, name: str, installed: set[str], tag_width: int) -> None:
+        action, verb = (
+            ("Upgrading", "upgrade") if name in installed else ("Installing", "install")
+        )
+        stream_subprocess(
+            [str(uv), "tool", verb, name], f"[{name:>{tag_width}}]", note=action
         )
 
-    uv = find_binary("uv")
-    if not uv:
-        sys.exit("ERROR: uv must be installed first; [bash] must run before [uv].")
-
-    section = load_section()
-    requested = section.get("packages", [])
-    if not requested:
-        logger.info("No [uv].packages entries in recipe.toml; nothing to do")
-        return
-
-    start_log_tee()
-    logger.info(f"Running {len(requested)} uv tool(s) in parallel")
-
-    installed = list_installed_tools(uv)
-
-    tag_width = max(len(name) for name in requested)
-    failures: list[tuple[str, Exception]] = []
-    with ThreadPoolExecutor(max_workers=len(requested)) as pool:
-        pending = {
-            pool.submit(
-                install_or_upgrade,
-                uv,
-                name,
-                installed,
-                f"[{name:>{tag_width}}]",
-            ): name
-            for name in requested
-        }
-        for future in as_completed(pending):
-            name = pending[future]
-            try:
-                future.result()
-            except Exception as exc:
-                failures.append((name, exc))
-                logger.error(f"{name} failed: {exc}")
-
-    if failures:
-        sys.exit(
-            f"{len(failures)} of {len(requested)} uv tool(s) failed: "
-            + ", ".join(name for name, _ in failures)
-        )
-
-    logger.info("Done.")
+    def show_version(self) -> list[VersionInfo]:
+        uv = self._find_uv()
+        versions = parse_tool_versions(uv) if uv else {}
+        rows: list[VersionInfo] = []
+        for name in self.requested:
+            installed = versions.get(name)
+            rows.append(
+                VersionInfo(
+                    name=name,
+                    installed_version=installed or "(none)",
+                    available_version="unknown",
+                    source="uv",
+                    status="installed" if installed else "missing",
+                    cook=self.cook_name,
+                    manager=self.manager,
+                )
+            )
+        return rows
 
 
 if __name__ == "__main__":
-    main()
+    main_for(UvCook)

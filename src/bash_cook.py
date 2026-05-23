@@ -1,177 +1,177 @@
-"""Cook for [bash.<name>] entries — vendor `curl | bash` bootstrappers.
+"""Cook for [bash.<name>] entries — a generic shell executor.
 
-Field semantics (per recipe.toml block):
-  url            installer URL, piped into bash
-  bin            binary to probe for idempotency (default: subtable name)
-  args           args appended after `bash -s --`
-  update_action  list -> `<bin> <update_action...>`; "rerun-installer" ->
-                 re-pipe url; absent -> skip update
-  pre_update     bash one-liner run via `bash -c` before update_action;
-                 non-zero exit aborts the update as a soft failure
+Each entry is a small, idempotent shell program. This is the home for
+system-config one-offs that read more honestly as shell than as Python
+(apt prerequisites, debconf, the trusted.gpg.d hardening, the Ubuntu pin).
 
-Failure contract with chef.py: install errors exit 1 (hard — downstream
-sections may depend on the tool). Update errors exit SOFT_FAIL_EXIT=75
-(soft — tool stays usable, run continues). Refuses to run as root: these
-installers write into $HOME.
+Field semantics (per [bash.<name>] block):
+  install_or_update  required. bash snippet (may be multi-line). MUST be
+                     idempotent: check-and-act, or act on something natively
+                     idempotent. Non-zero exit is a hard failure (downstream
+                     sections may depend on it).
+  pre_update         optional. bash snippet run before install_or_update.
+                     Non-zero exit aborts the entry as a soft failure.
+  post_update        optional. bash snippet run after install_or_update.
+                     Non-zero exit aborts the entry as a soft failure.
+  check_installed    optional. read-only bash snippet; show_version() runs it
+                     and wraps stdout into a VersionInfo. Loose contract — emit
+                     a version string, or `present`/`absent`.
+
+Idempotent file writes: every snippet has a `write-if-changed` command on
+$PATH that wraps harness.write_if_changed — pipe content to it with a
+destination path (and optional octal mode) so heredoc'd files stay quiet on
+re-runs:  `cat <<EOF | write-if-changed /etc/apt/.../foo.pref`.
+
+Entries run sequentially in recipe file order. The cook runs as root (its
+entries write under /etc and drive apt); chef spawns it under sudo.
 """
 
 import os
-import shlex
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import tempfile
 from pathlib import Path
 
 from loguru import logger
 
-from harness import (
-    SOFT_FAIL_EXIT,
-    fetch_url,
-    find_binary,
-    load_section,
-    start_log_tee,
-    stream_subprocess,
-)
+from cook_base import CookBase, Result, VersionInfo, main_for
+from harness import SRC_DIR, stream_subprocess
 
-SCRIPT = Path(__file__).resolve()
+WRITE_IF_CHANGED_HELPER = """#!{python}
+import sys
+from pathlib import Path
 
-RERUN_INSTALLER = "rerun-installer"
+sys.path.insert(0, {src_dir!r})
+
+import harness  # noqa: E402
+from loguru import logger  # noqa: E402
+
+logger.remove()
+logger.add(sys.stderr, format="{{message}}", level="INFO")
+
+dest = Path(sys.argv[1])
+mode = int(sys.argv[2], 8) if len(sys.argv) > 2 else 0o644
+harness.write_if_changed(dest, sys.stdin.buffer.read(), mode)
+"""
 
 
-class UpdateError(Exception):
-    """Update step failed; the tool itself remains installed and usable."""
-
-
-def run_installer(url: str, args: list[str], tag: str, note: str) -> None:
-    stream_subprocess(
-        ["bash", "-s", "--", *args],
-        tag,
-        note=note,
-        stdin=fetch_url(url),
+def install_helper_on_path() -> tempfile.TemporaryDirectory:
+    """Drop a `write-if-changed` shim into a temp dir and prepend it to PATH so
+    snippets can funnel file writes through harness.write_if_changed. The shim
+    runs under this cook's interpreter (sys.executable) so loguru/harness import
+    cleanly even under sudo."""
+    helper_dir = tempfile.TemporaryDirectory(prefix="sys-conf-py-helper-")
+    helper = Path(helper_dir.name) / "write-if-changed"
+    helper.write_text(
+        WRITE_IF_CHANGED_HELPER.format(python=sys.executable, src_dir=str(SRC_DIR))
     )
+    helper.chmod(0o755)
+    os.environ["PATH"] = f"{helper_dir.name}:{os.environ['PATH']}"
+    return helper_dir
 
 
-def update_existing(
-    url: str,
-    bin_path: Path,
-    args: list[str],
-    update_action: list[str] | str | None,
-    pre_update: str | None,
-    tag: str,
-) -> None:
-    if update_action is None:
-        logger.info(f"{tag} No update_action configured; leaving {bin_path} as-is")
-        return
+class BashCook(CookBase):
+    # The only [bash.*] entries today are root apt operations; chef spawns this
+    # cook under sudo. A future non-root bash section would split this attr off
+    # per-section (Phase 4 per-entry granularity).
+    needs_root = True
+    manager = "bash"
 
-    if pre_update:
-        shell_cmd = f"PATH={shlex.quote(str(bin_path.parent))}:$PATH; {pre_update}"
-        stream_subprocess(
-            ["bash", "-c", shell_cmd],
-            tag,
-            note=f"Pre-update hook (bash -c): {pre_update}",
-        )
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        self.entries: dict[str, dict] = section
 
-    if isinstance(update_action, list) and update_action:
-        stream_subprocess(
-            [str(bin_path), *update_action],
-            tag,
-            note=f"Updating via `{bin_path.name} {' '.join(update_action)}`",
-        )
-    elif update_action == RERUN_INSTALLER:
-        run_installer(
-            url, args, tag, note=f"Updating by re-running installer from {url}"
-        )
-    else:
-        raise ValueError(
-            f"unrecognized update_action for {tag}: {update_action!r} "
-            f"(expected a list of args, the string {RERUN_INSTALLER!r}, or absent)"
-        )
+    def install_or_update(self) -> Result:
+        if not self.entries:
+            return Result("ok", "No [bash.*] entries in recipe.toml; nothing to do")
 
-
-def install_from_url(
-    url: str,
-    bin_name: str,
-    args: list[str],
-    update_action: list[str] | str | None,
-    pre_update: str | None,
-    tag: str,
-) -> None:
-    if existing := find_binary(bin_name):
+        helper_dir = install_helper_on_path()
         try:
-            update_existing(url, existing, args, update_action, pre_update, tag)
-        except subprocess.CalledProcessError as exc:
-            raise UpdateError(str(exc)) from exc
-        return
+            logger.info(f"Running {len(self.entries)} bash entry(ies) sequentially")
+            hard_failures: list[str] = []
+            soft_failures: list[str] = []
+            for name, block in self.entries.items():
+                outcome = self._run_entry(name, block)
+                if outcome == "hard":
+                    hard_failures.append(name)
+                elif outcome == "soft":
+                    soft_failures.append(name)
+        finally:
+            helper_dir.cleanup()
 
-    run_installer(url, args, tag, note=f"Installing from {url}")
+        if hard_failures:
+            return Result(
+                "hard_fail",
+                f"{len(hard_failures)}/{len(self.entries)} bash entry(ies) failed: "
+                + ", ".join(hard_failures)
+                + ". Aborting.",
+            )
+        if soft_failures:
+            return Result(
+                "soft_fail",
+                f"{len(soft_failures)}/{len(self.entries)} bash pre/post hook(s) "
+                "failed: " + ", ".join(soft_failures) + ".",
+            )
+        logger.info("Done.")
+        return Result("ok", changed=True)
 
-    if found := find_binary(bin_name):
-        logger.info(f"{tag} Installed: {found}")
-    else:
-        logger.warning(f"{tag} {bin_name} not found after install — non-standard path?")
+    def _run_entry(self, name: str, block: dict) -> str:
+        """Run one entry's pre_update / install_or_update / post_update. Returns
+        "ok", "soft" (pre/post hook failed), or "hard" (main snippet failed)."""
+        tag = f"[{name}]"
+        if "install_or_update" not in block:
+            logger.error(f"{tag} missing required `install_or_update` snippet")
+            return "hard"
 
-
-def main() -> None:
-    if os.geteuid() == 0:
-        sys.exit("ERROR: run as invoking user, not root — installers write into $HOME.")
-
-    installs = load_section()
-    if not installs:
-        logger.info("No [bash.*] entries in recipe.toml; nothing to do")
-        return
-
-    start_log_tee()
-    logger.info(f"Running {len(installs)} install(s) in parallel")
-
-    tag_width = max(len(name) for name in installs)
-    install_failures: list[tuple[str, Exception]] = []
-    update_failures: list[tuple[str, UpdateError]] = []
-    with ThreadPoolExecutor(max_workers=len(installs)) as pool:
-        pending = {
-            pool.submit(
-                install_from_url,
-                block["url"],
-                block.get("bin", name),
-                block.get("args", []),
-                block.get("update_action"),
-                block.get("pre_update"),
-                f"[{name:>{tag_width}}]",
-            ): name
-            for name, block in installs.items()
-        }
-        for future in as_completed(pending):
-            name = pending[future]
+        if pre := block.get("pre_update"):
             try:
-                future.result()
-            except UpdateError as exc:
-                update_failures.append((name, exc))
-                logger.warning(
-                    f"[{name:>{tag_width}}] UPDATE FAILED — {name} still installed "
-                    f"but NOT updated. See output above. Error: {exc}"
+                stream_subprocess(["bash", "-c", pre], tag, note="pre_update")
+            except subprocess.CalledProcessError as exc:
+                logger.warning(f"{tag} pre_update failed: {exc}")
+                return "soft"
+
+        try:
+            stream_subprocess(
+                ["bash", "-c", block["install_or_update"]],
+                tag,
+                note="install_or_update",
+            )
+        except subprocess.CalledProcessError as exc:
+            logger.error(f"{tag} install_or_update failed: {exc}")
+            return "hard"
+
+        if post := block.get("post_update"):
+            try:
+                stream_subprocess(["bash", "-c", post], tag, note="post_update")
+            except subprocess.CalledProcessError as exc:
+                logger.warning(f"{tag} post_update failed: {exc}")
+                return "soft"
+
+        return "ok"
+
+    def show_version(self) -> list[VersionInfo]:
+        rows: list[VersionInfo] = []
+        for name, block in self.entries.items():
+            check = block.get("check_installed")
+            if not check:
+                continue
+            completed = subprocess.run(
+                ["bash", "-c", check], capture_output=True, text=True
+            )
+            reported = completed.stdout.strip()
+            rows.append(
+                VersionInfo(
+                    name=name,
+                    installed_version=reported or "(none)",
+                    available_version="unknown",
+                    source="bash",
+                    status="installed" if completed.returncode == 0 else "unknown",
+                    cook=self.cook_name,
+                    manager=self.manager,
                 )
-            except Exception as exc:
-                install_failures.append((name, exc))
-                logger.error(
-                    f"[{name:>{tag_width}}] INSTALL FAILED — {name} NOT on box. "
-                    f"See output above. Error: {exc}"
-                )
-
-    if install_failures:
-        names = ", ".join(name for name, _ in install_failures)
-        logger.error(
-            f"{len(install_failures)}/{len(installs)} install(s) failed: {names}. Aborting."
-        )
-        sys.exit(1)
-
-    if update_failures:
-        names = ", ".join(name for name, _ in update_failures)
-        logger.warning(
-            f"{len(update_failures)}/{len(installs)} update(s) failed: {names}. Exit {SOFT_FAIL_EXIT}."
-        )
-        sys.exit(SOFT_FAIL_EXIT)
-
-    logger.info("Done.")
+            )
+        return rows
 
 
 if __name__ == "__main__":
-    main()
+    main_for(BashCook)
