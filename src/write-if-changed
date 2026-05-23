@@ -1,0 +1,31 @@
+#!/usr/bin/env -S uv run
+"""Shell helper: read stdin, write to <path> only when content differs.
+
+Wraps harness.write_if_changed so bash snippets in [bash.*] recipe entries
+get the same idempotency semantics (logs "Unchanged:" / "Writing  :") without
+per-entry boilerplate. Single source of truth for the compare-and-write
+primitive.
+
+Usage: write-if-changed <destination-path> [octal-mode]
+  - Content is read from stdin.
+  - mode defaults to 0o644 if omitted.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import write_if_changed  # noqa: E402
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("Usage: write-if-changed <destination-path> [octal-mode]")
+    path = Path(sys.argv[1])
+    mode = int(sys.argv[2], 8) if len(sys.argv) > 2 else 0o644
+    content = sys.stdin.buffer.read()
+    write_if_changed(path, content, mode)
+
+
+if __name__ == "__main__":
+    main()

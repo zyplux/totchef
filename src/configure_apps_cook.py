@@ -93,7 +93,7 @@ def write_desktop_override(
     if not system_desktop.exists():
         logger.warning(
             f"{system_desktop} not found; skipping .desktop override "
-            "(install package via apt_cook.py first)"
+            "(install package via [apt_pkg] first)"
         )
         return False
 

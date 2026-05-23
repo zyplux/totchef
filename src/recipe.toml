@@ -1,16 +1,16 @@
 # recipe.toml — declarative config for sys-conf-py.
 #
-# Sections drive cooks by name (file order = execution order):
-#   [bash.<name>] -> src/bash_cook.py  (curl | bash CLIs)
-#   [cargo]       -> src/cargo_cook.py (via cargo-binstall)
-#   [uv]          -> src/uv_cook.py    (Python CLI tools)
-#   [apt]         -> src/apt_cook.py   (packages, repos, debconf, pinning; last — re-execs sudo)
+# Section name → src/<name>_cook.py (file order = execution order within
+# a topo level). Each section may declare:
+#   needs_root   bool (default false) — chef spawns the cook via sudo when true
+#   depends_on   list of section names (default []) — hard ordering constraints
 #
-# Named subtables ([apt.repo.<name>], [bash.<cli>], [apt.debconf.<handle>])
-# carry their identifier in the section header; pure package lists stay arrays.
+# Named subtables ([url.<name>], [bash.<name>], [apt_repo.<name>]) carry their
+# identifier in the section header; package lists and scalar settings are direct
+# keys on the parent section.
 
 # ---------------------------------------------------------------------------
-# bash — vendor `curl | bash` CLIs
+# url — vendor `curl | bash` CLIs (non-root)
 # ---------------------------------------------------------------------------
 #
 # Required: url.
@@ -26,36 +26,42 @@
 #                  the server process actually exits — so the one-liner stops
 #                  AND polls `herdr status server` until "not running".
 
-[bash.bun]
+[url]
+needs_root = false
+depends_on = []
+
+[url.bun]
 url = "https://bun.sh/install"
 update_action = ["upgrade"]
 
-[bash.uv]
+[url.uv]
 url = "https://astral.sh/uv/install.sh"
 update_action = ["self", "update"]
 
-[bash.claude]
+[url.claude]
 url = "https://claude.ai/install.sh"
 update_action = ["update"]
 
-[bash.rustup]
+[url.rustup]
 url = "https://sh.rustup.rs"
 args = ["-y"]
 update_action = ["self", "update"]
 
-[bash.herdr]
+[url.herdr]
 url = "https://herdr.dev/install.sh"
 update_action = ["update"]
 pre_update = "herdr server stop || true; for _ in {1..30}; do herdr status server | grep -q 'not running' && exit 0; sleep 0.1; done; exit 1"
 
-[bash.agy]
+[url.agy]
 url = "https://antigravity.google/cli/install.sh"
 
 # ---------------------------------------------------------------------------
-# cargo — crates via cargo-binstall
+# cargo — crates via cargo-binstall (non-root)
 # ---------------------------------------------------------------------------
 
 [cargo]
+needs_root = false
+depends_on = ["url"]
 packages = [
     "cargo-binstall",
     "cargo-update",
@@ -65,19 +71,158 @@ packages = [
 ]
 
 # ---------------------------------------------------------------------------
-# uv — Python CLI tools (isolated venvs, symlinked into ~/.local/bin)
+# uv — Python CLI tools (isolated venvs, symlinked into ~/.local/bin) (non-root)
 # ---------------------------------------------------------------------------
 
 [uv]
+needs_root = false
+depends_on = ["url"]
 packages = [
     "ruff",
 ]
 
 # ---------------------------------------------------------------------------
-# apt — packages via nala. Version pin: "name=version".
+# bash — root shell operations run as idempotent bash snippets (root)
 # ---------------------------------------------------------------------------
+#
+# Each entry has:
+#   install_or_update  (required) idempotent bash snippet
+#   check_installed    (optional) bash snippet; stdout goes into show_version
+#   pre_update         (optional) snippet before install_or_update
+#   post_update        (optional) snippet after install_or_update
+#
+# The `write-if-changed` helper is on $PATH when snippets run — pipe file
+# content to it for idempotent writes ("Unchanged:" on quiet re-runs):
+#
+#   write-if-changed /etc/some/file <<'EOF'
+#   file content here
+#   EOF
+#
+# Entries run sequentially in file order.
 
-[apt]
+[bash]
+needs_root = true
+depends_on = []
+
+[bash.apt_prereqs]
+# Bootstrap: ensure curl, gnupg, ca-certificates, nala are present before any
+# apt repo work begins. apt-get (not nala) so this self-bootstraps from clean.
+install_or_update = """
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y --no-install-recommends curl gnupg ca-certificates nala
+"""
+check_installed = "dpkg -l nala 2>/dev/null | awk '/^ii/{print $3}' || echo absent"
+
+[bash.trusted_gpgd_hook]
+# Write the DPkg Pre/Post-Invoke hook that auto-unlocks /etc/apt/trusted.gpg.d/
+# around dpkg runs, then set the immutable bit on the directory. The hook is
+# necessary because a prior do-release-upgrade aborted when ubuntu-keyring
+# couldn't write a new key into the locked directory. With the hook in place,
+# upgrade and manual dpkg operations work; the immutable bit blocks drive-by
+# installer scripts that drop keys there without going through apt/dpkg.
+install_or_update = """
+write-if-changed /etc/apt/apt.conf.d/99-trusted-gpgd-autounlock <<'EOF'
+// Lift /etc/apt/trusted.gpg.d/'s immutable bit around each dpkg run so
+// do-release-upgrade and ubuntu-keyring updates can write new keys, then
+// restore it. The dir stays locked otherwise, blocking drive-by install
+// scripts that drop keys without going through apt/dpkg.
+DPkg::Pre-Invoke  { "/usr/bin/chattr -i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
+DPkg::Post-Invoke { "/usr/bin/chattr +i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
+EOF
+lsattr -d /etc/apt/trusted.gpg.d/ 2>/dev/null | grep -qE -- '-i-|-i ' || chattr +i /etc/apt/trusted.gpg.d/
+"""
+check_installed = "lsattr -d /etc/apt/trusted.gpg.d/ 2>/dev/null | grep -qE -- '-i-|-i ' && echo immutable || echo mutable"
+
+[bash.ubuntu_pin]
+# Uprank Ubuntu archives above third-party repos so a name-colliding third-party
+# package loses to Ubuntu by default. Default repo priority is 500; Ubuntu
+# main/updates/security are set to 900. Third-party-only packages still install
+# at 500 — nothing to outrank them. Backports is intentionally NOT upranked
+# (NotAutomatic: yes at priority 1; upranking would defeat that).
+# Per-package third-party override: add a pin with Pin-Priority > 900 in a
+# separate file in /etc/apt/preferences.d/.
+#
+# RISK: Ubuntu rebuilds retired nvidia metapackages as transitional shims
+# (Depends: nvidia-driver-<NEW>-open) -> full-upgrade silently jumps branches.
+# Mitigation: every other nvidia-driver-* pinned to Pin-Priority: -1 separately.
+install_or_update = """
+RELEASE=$(. /etc/os-release && echo "${VERSION_CODENAME}")
+write-if-changed /etc/apt/preferences.d/ubuntu-archives.pref <<EOF
+# Always prefer Ubuntu archives over third-party repos.
+# Default repo priority is 500. Ubuntu main/updates/security are upranked
+# to 900, so any third-party package colliding by name with an Ubuntu one
+# loses to Ubuntu. Third-party-only packages still install at 500.
+# Backports is intentionally NOT upranked (NotAutomatic: yes at priority 1).
+# Per-package third-party override: add a pin with Pin-Priority > 900.
+
+Package: *
+Pin: release o=Ubuntu, a=${RELEASE}
+Pin-Priority: 900
+
+Package: *
+Pin: release o=Ubuntu, a=${RELEASE}-updates
+Pin-Priority: 900
+
+Package: *
+Pin: release o=Ubuntu, a=${RELEASE}-security
+Pin-Priority: 900
+EOF
+"""
+check_installed = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
+
+[bash.debconf_code_insiders]
+# Prevent code-insiders' postinst from silently replacing our [apt_repo.vscode]
+# sources file with Microsoft's own repository config on every package update.
+install_or_update = "echo 'code-insiders code-insiders/add-microsoft-repo boolean false' | debconf-set-selections"
+check_installed = "debconf-get-selections 2>/dev/null | grep -q 'code-insiders.*add-microsoft-repo' && echo set || echo absent"
+
+# ---------------------------------------------------------------------------
+# apt_repo — third-party apt repos: GPG keys + .sources files (root)
+# ---------------------------------------------------------------------------
+#
+# Repos use modern layout: GPG key outside /etc/apt/trusted.gpg.d/ + .sources
+# with Signed-By: so each key only authorises its own repo.
+#
+# Required: key_url, uris.
+# Optional: suites ("stable"), components ("main"), architectures,
+#           keyring (/usr/share/keyrings/<name>.gpg), source_path.
+# {release} is interpolated in suites at runtime.
+
+[apt_repo]
+needs_root = true
+depends_on = ["bash"]
+
+[apt_repo."debian.griffo.io"]
+key_url = "https://debian.griffo.io/EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc"
+uris = "https://debian.griffo.io/apt"
+suites = "{release}"
+
+[apt_repo.brave-browser]
+key_url = "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+uris = "https://brave-browser-apt-release.s3.brave.com"
+
+[apt_repo.vscode]
+key_url = "https://packages.microsoft.com/keys/microsoft.asc"
+uris = "https://packages.microsoft.com/repos/code"
+
+[apt_repo.signal-desktop]
+key_url = "https://updates.signal.org/desktop/apt/keys.asc"
+uris = "https://updates.signal.org/desktop/apt"
+suites = "xenial"
+
+# ---------------------------------------------------------------------------
+# apt_pkg — packages via nala (root)
+# ---------------------------------------------------------------------------
+#
+# Runs: nala update → policy check → full-upgrade → install → autoremove.
+# Priority 0 in apt-cache policy aborts before full-upgrade with a clear error.
+#
+# Version pin: "name=version".
+
+[apt_pkg]
+needs_root = true
+depends_on = ["apt_repo"]
 packages = [
     "just",
     "ghostty",
@@ -96,39 +241,21 @@ packages = [
     "signal-desktop",
 ]
 
-# Uprank Ubuntu archive above third-party repos. {release} interpolated at runtime.
-[apt.ubuntu_pin]
-priority = 900
-suites = ["{release}", "{release}-updates", "{release}-security"]
+# ---------------------------------------------------------------------------
+# configure_gpu — eGPU PRIME auto-selection at boot + suspend crash mitigations
+# ---------------------------------------------------------------------------
+# Installs egpu-prime-switch + systemd unit, pins NVIDIA power options, and
+# sets mem_sleep_default=deep in GRUB to avoid s2idle oopses on Tiger Lake.
+# See docs/investigations/sleep-crash.md for the incident writeup.
 
-# [apt.repo.<name>] -> .sources file + signing key under /usr/share/keyrings/<name>.gpg.
-# Required: key_url, uris. Optional: suites ("stable"), components ("main"),
-# architectures, keyring, source_path. {release} interpolated in suites.
+[configure_gpu]
+needs_root = true
+depends_on = ["apt_pkg"]
 
-[apt.repo."debian.griffo.io"]
-key_url = "https://debian.griffo.io/EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc"
-uris = "https://debian.griffo.io/apt"
-suites = "{release}"
+# ---------------------------------------------------------------------------
+# configure_apps — per-app GPU/Wayland/feature flags (Brave, Code, Claude Code)
+# ---------------------------------------------------------------------------
 
-[apt.repo.brave-browser]
-key_url = "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
-uris = "https://brave-browser-apt-release.s3.brave.com"
-
-[apt.repo.vscode]
-key_url = "https://packages.microsoft.com/keys/microsoft.asc"
-uris = "https://packages.microsoft.com/repos/code"
-
-[apt.repo.signal-desktop]
-key_url = "https://updates.signal.org/desktop/apt/keys.asc"
-uris = "https://updates.signal.org/desktop/apt"
-suites = "xenial"
-
-# [apt.debconf.<handle>] -> debconf-set-selections before any apt op.
-# Used here to stop code-insiders' postinst rewriting our [apt.repo.vscode].
-# Required: package, question, type, value.
-
-[apt.debconf.code-insiders]
-package = "code-insiders"
-question = "code-insiders/add-microsoft-repo"
-type = "boolean"
-value = "false"
+[configure_apps]
+needs_root = true
+depends_on = ["apt_pkg"]

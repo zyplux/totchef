@@ -1,18 +1,21 @@
 #!/usr/bin/env -S uv run
 """Orchestrator for `just up`.
 
-Spawns src/<section>_cook.py per top-level [section] in recipe.toml (file
-order = execution order). Each cook gets its slice via SYS_CONF_PY_SECTION_JSON
-env var; sudo re-exec preserves it. Subprocesses (not imports) so root-
-elevated cooks can execvp into sudo without taking down the orchestrator.
+Reads recipe.toml, builds a dependency DAG from each section's `depends_on`
+field, and walks it in topological order (file order is the tiebreaker).
+For each section it spawns src/<section>_cook.py as a subprocess — not an
+import — so a cook's sudo-elevated work can't take down the orchestrator.
+
+The section slice is passed via SYS_CONF_PY_SECTION_JSON. For sections with
+`needs_root = true`, chef spawns the cook under sudo with --preserve-env so
+the env var survives the privilege boundary.
 
 Exit-code contract: 0 success, 75 soft fail (continue), other hard fail
 (abort). Soft-failed sections are listed in a final stderr banner so they
 can't get buried in scrollback; chef.py also exits 75 if any soft-failed.
-
-After recipe.toml sections, STANDALONE_PLAYBOOKS run unconditionally.
 """
 
+import graphlib
 import json
 import os
 import subprocess
@@ -25,17 +28,31 @@ from harness import LOG_DIR, RECIPE_TOML, SECTION_ENV, SHARED_LOG_ENV, SOFT_FAIL
 
 SRC_DIR = Path(__file__).resolve().parent
 
-STANDALONE_PLAYBOOKS = [
-    "configure_gpu.py",
-    "configure_apps.py",
-]
 
+def _run_section(section_name: str, section_data: dict, base_env: dict) -> int:
+    cook = SRC_DIR / f"{section_name}_cook.py"
+    if not cook.exists():
+        sys.exit(f"ERROR: no cook for [{section_name}] (expected {cook}).")
 
-def run_cook(cook: Path, env: dict[str, str], label: str) -> int:
-    result = subprocess.run([sys.executable, str(cook)], env=env)
+    needs_root = section_data.get("needs_root", False)
+    env = {**base_env, SECTION_ENV: json.dumps(section_data)}
+
+    if needs_root:
+        cmd = [
+            "sudo",
+            f"--preserve-env={SHARED_LOG_ENV},{SECTION_ENV}",
+            sys.executable,
+            str(cook),
+        ]
+    else:
+        cmd = [sys.executable, str(cook)]
+
+    result = subprocess.run(cmd, env=env)
     if result.returncode in (0, SOFT_FAIL_EXIT):
         return result.returncode
-    sys.exit(f"\n[{label}] FAILED (exit {result.returncode}). Aborting `just up`.")
+    sys.exit(
+        f"\n[{section_name}] FAILED (exit {result.returncode}). Aborting `just up`."
+    )
 
 
 def main() -> None:
@@ -49,20 +66,20 @@ def main() -> None:
     with RECIPE_TOML.open("rb") as f:
         config = tomllib.load(f)
 
+    sorter: graphlib.TopologicalSorter[str] = graphlib.TopologicalSorter()
+    for name, data in config.items():
+        sorter.add(name, *data.get("depends_on", []))
+    sorter.prepare()
+
     soft_failed_sections: list[str] = []
+    base_env = os.environ.copy()
 
-    for section_name, section_data in config.items():
-        cook = SRC_DIR / f"{section_name}_cook.py"
-        if not cook.exists():
-            sys.exit(f"ERROR: no cook for [{section_name}] (expected {cook}).")
-        env = {**os.environ, SECTION_ENV: json.dumps(section_data)}
-        if run_cook(cook, env, section_name) == SOFT_FAIL_EXIT:
-            soft_failed_sections.append(section_name)
-
-    for playbook in STANDALONE_PLAYBOOKS:
-        cook = SRC_DIR / playbook
-        if run_cook(cook, os.environ.copy(), playbook) == SOFT_FAIL_EXIT:
-            soft_failed_sections.append(playbook)
+    while sorter.is_active():
+        for section_name in sorter.get_ready():
+            rc = _run_section(section_name, config[section_name], base_env)
+            if rc == SOFT_FAIL_EXIT:
+                soft_failed_sections.append(section_name)
+            sorter.done(section_name)
 
     if soft_failed_sections:
         sys.stderr.write(

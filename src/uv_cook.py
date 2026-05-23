@@ -12,7 +12,7 @@ executables indented (`- <bin>`) below.
 Packages are processed concurrently via a thread pool; uv serializes
 conflicting filesystem work internally with its own locks.
 
-Requires uv to be installed first — bash_cook.py must run first.
+Requires uv to be installed first — url_cook.py must run first.
 
 Runs as the invoking user — uv writes into ~/.local/share/uv and ~/.local/bin,
 so the script refuses to run as root.
@@ -26,33 +26,94 @@ from pathlib import Path
 
 from loguru import logger
 
-from harness import find_binary, load_section, start_log_tee, stream_subprocess
+from harness import (
+    SOFT_FAIL_EXIT,
+    CookBase,
+    Result,
+    VersionInfo,
+    find_binary,
+    load_section,
+    start_log_tee,
+    stream_subprocess,
+)
 
 SCRIPT = Path(__file__).resolve()
 
 
-def list_installed_tools(uv: Path) -> set[str]:
-    """Tool names from `uv tool list`. Each tool is announced by a column-0
-    line `<name> v<version>`; executable lines below it start with `- ` and
-    are ignored."""
-    completed = subprocess.run(
-        [str(uv), "tool", "list"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return {
-        line.split()[0]
-        for line in completed.stdout.splitlines()
-        if line and not line[0].isspace() and not line.startswith("-")
-    }
+class UvCook(CookBase):
+    def __init__(self, section: dict, uv: Path) -> None:
+        self.packages: list[str] = section.get("packages", [])
+        self.uv = uv
 
+    def install_or_update(self) -> Result:
+        if not self.packages:
+            return Result("ok", "No [uv].packages entries; nothing to do", False)
 
-def install_or_upgrade(uv: Path, name: str, installed: set[str], tag: str) -> None:
-    action, verb = (
-        ("Upgrading", "upgrade") if name in installed else ("Installing", "install")
-    )
-    stream_subprocess([str(uv), "tool", verb, name], tag, note=action)
+        installed = self._list_installed()
+        tag_width = max(len(name) for name in self.packages)
+        failures: list[tuple[str, Exception]] = []
+
+        with ThreadPoolExecutor(max_workers=len(self.packages)) as pool:
+            pending = {
+                pool.submit(
+                    self._process_one,
+                    name,
+                    installed,
+                    f"[{name:>{tag_width}}]",
+                ): name
+                for name in self.packages
+            }
+            for future in as_completed(pending):
+                name = pending[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    failures.append((name, exc))
+                    logger.error(f"{name} failed: {exc}")
+
+        if failures:
+            names = ", ".join(n for n, _ in failures)
+            return Result(
+                "hard_fail",
+                f"{len(failures)}/{len(self.packages)} uv tool(s) failed: {names}",
+                True,
+            )
+        return Result("ok", f"{len(self.packages)} uv tool(s) processed", True)
+
+    def show_version(self) -> list[VersionInfo]:
+        installed = self._list_installed()
+        return [
+            VersionInfo(
+                name=name,
+                installed_version=installed.get(name, ""),
+                available_version="",
+                source="pypi",
+                status="installed" if name in installed else "missing",
+                cook="uv_cook",
+                manager="uv",
+            )
+            for name in self.packages
+        ]
+
+    def _list_installed(self) -> dict[str, str]:
+        completed = subprocess.run(
+            [str(self.uv), "tool", "list"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result: dict[str, str] = {}
+        for line in completed.stdout.splitlines():
+            if line and not line[0].isspace() and not line.startswith("-"):
+                parts = line.split()
+                result[parts[0]] = parts[1] if len(parts) > 1 else ""
+        return result
+
+    def _process_one(self, name: str, installed: dict[str, str], tag: str) -> None:
+        action, verb = (
+            ("Upgrading", "upgrade") if name in installed else ("Installing", "install")
+        )
+        stream_subprocess([str(self.uv), "tool", verb, name], tag, note=action)
 
 
 def main() -> None:
@@ -64,45 +125,25 @@ def main() -> None:
 
     uv = find_binary("uv")
     if not uv:
-        sys.exit("ERROR: uv must be installed first; [bash] must run before [uv].")
+        sys.exit("ERROR: uv must be installed first; [url] must run before [uv].")
 
     section = load_section()
-    requested = section.get("packages", [])
-    if not requested:
+    start_log_tee()
+
+    cook = UvCook(section, uv)
+
+    if not cook.packages:
         logger.info("No [uv].packages entries in recipe.toml; nothing to do")
         return
 
-    start_log_tee()
-    logger.info(f"Running {len(requested)} uv tool(s) in parallel")
+    logger.info(f"Running {len(cook.packages)} uv tool(s) in parallel")
+    result = cook.install_or_update()
 
-    installed = list_installed_tools(uv)
-
-    tag_width = max(len(name) for name in requested)
-    failures: list[tuple[str, Exception]] = []
-    with ThreadPoolExecutor(max_workers=len(requested)) as pool:
-        pending = {
-            pool.submit(
-                install_or_upgrade,
-                uv,
-                name,
-                installed,
-                f"[{name:>{tag_width}}]",
-            ): name
-            for name in requested
-        }
-        for future in as_completed(pending):
-            name = pending[future]
-            try:
-                future.result()
-            except Exception as exc:
-                failures.append((name, exc))
-                logger.error(f"{name} failed: {exc}")
-
-    if failures:
-        sys.exit(
-            f"{len(failures)} of {len(requested)} uv tool(s) failed: "
-            + ", ".join(name for name, _ in failures)
-        )
+    if result.status == "hard_fail":
+        sys.exit(result.message)
+    if result.status == "soft_fail":
+        logger.warning(result.message)
+        sys.exit(SOFT_FAIL_EXIT)
 
     logger.info("Done.")
 

@@ -1,21 +1,54 @@
 """Shared scaffolding for sys-conf-py cooks: sudo re-exec, log teeing,
-streamed subprocess wrapping, idempotent file writes, binary discovery.
+streamed subprocess wrapping, idempotent file writes, binary discovery,
+cook base class and return types.
 """
 
 import json
 import os
+import platform
 import pwd
 import shutil
 import subprocess
 import sys
 import threading
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from urllib.request import Request, urlopen
 
 from loguru import logger
 
 SRC_DIR = Path(__file__).resolve().parent
+
+
+@dataclass(frozen=True)
+class Result:
+    status: Literal["ok", "soft_fail", "hard_fail"]
+    message: str
+    changed: bool
+
+
+@dataclass(frozen=True)
+class VersionInfo:
+    name: str
+    installed_version: str
+    available_version: str
+    source: str
+    status: Literal["installed", "needs_update", "missing", "unknown"]
+    cook: str
+    manager: str
+
+
+class CookBase(ABC):
+    @abstractmethod
+    def install_or_update(self) -> Result: ...
+
+    @abstractmethod
+    def show_version(self) -> list[VersionInfo]: ...
+
+
 REPO_ROOT = SRC_DIR.parent
 LOG_DIR = REPO_ROOT / "logs"
 RECIPE_TOML = SRC_DIR / "recipe.toml"
@@ -183,6 +216,14 @@ def find_binary(name: str) -> Path | None:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def detect_release() -> str:
+    osr = platform.freedesktop_os_release()
+    release = osr.get("VERSION_CODENAME") or osr.get("UBUNTU_CODENAME")
+    if not release:
+        sys.exit("ERROR: could not determine release codename")
+    return release
 
 
 USER_AGENT = "sys-conf-py"
