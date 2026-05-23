@@ -35,7 +35,7 @@ display. Determine the cause and bring perf up. Reneder on eGPU where possible.
 ### 2026-05-19 — Round 1: strip the nvidia-vaapi-driver stack
 
 - `apps_config.toml`: dropped `[env]` block (`LIBVA_DRIVER_NAME=nvidia`, `NVD_BACKEND=direct`); dropped `VaapiIgnoreDriverChecks` from both apps' `enable-features`.
-- `apt_config.toml`: removed `nvidia-vaapi-driver`.
+- `recipe.toml`: removed `nvidia-vaapi-driver`.
 - Ran `sudo apt-get remove --purge -y nvidia-vaapi-driver && sudo apt-get autoremove -y` (manually, as the harness can't elevate from agent shells).
 - Patched materialized `~/.local/share/applications/brave-browser.desktop`, `code-insiders.desktop`, and `~/.vscode-insiders/argv.json` so changes take effect on next app launch without re-running `configure_apps.py`.
 - **Regression in transit:** initially also dropped `VaapiOnNvidiaGPUs`; this disabled VA-API entirely because Chromium's NVIDIA-detected gate fired. Restored to both apps' `enable-features`. iHD now load-bearing for hardware decode.

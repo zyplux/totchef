@@ -1,5 +1,5 @@
 up:
-    ./src/main.py
+    ./src/chef.py
 
 _prime-sudo:
     sudo -v

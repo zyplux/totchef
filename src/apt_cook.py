@@ -5,7 +5,7 @@ bootstrap and ongoing daily-driver maintenance. Actions run through nala
 (parallel downloads + `nala history undo` for rollback); nala is
 bootstrapped via apt-get on the first run.
 
-Driven by the [apt] section of install.toml:
+Driven by the [apt] section of recipe.toml:
   packages              installed at the end of the run
   [apt.ubuntu_pin]      uprank Ubuntu archives ({release} interpolated)
   [apt.repo.<name>]     one subtable per third-party apt repo
@@ -268,7 +268,7 @@ def main() -> None:
             f"ERROR: package(s) not available in any configured repo: {', '.join(missing)}\n"
             "  - Check release-specific naming (e.g. libva-nvidia-driver -> nvidia-vaapi-driver on Ubuntu 26.04+).\n"
             "  - Confirm the package's component is enabled (main / universe / multiverse / restricted).\n"
-            "  - For a third-party package, confirm its [apt.repo.<name>] subtable is in install.toml."
+            "  - For a third-party package, confirm its [apt.repo.<name>] subtable is in recipe.toml."
         )
 
     nala("full-upgrade", "-y", note="Running nala full-upgrade")

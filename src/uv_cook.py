@@ -1,5 +1,5 @@
 """
-Idempotent uv-tool installer/updater driven by the [uv] section of install.toml.
+Idempotent uv-tool installer/updater driven by the [uv] section of recipe.toml.
 
 For each entry in [uv].packages:
   not installed -> `uv tool install <pkg>`
@@ -12,7 +12,7 @@ executables indented (`- <bin>`) below.
 Packages are processed concurrently via a thread pool; uv serializes
 conflicting filesystem work internally with its own locks.
 
-Requires uv to be installed first — bash.py must run first.
+Requires uv to be installed first — bash_cook.py must run first.
 
 Runs as the invoking user — uv writes into ~/.local/share/uv and ~/.local/bin,
 so the script refuses to run as root.
@@ -69,7 +69,7 @@ def main() -> None:
     section = load_section()
     requested = section.get("packages", [])
     if not requested:
-        logger.info("No [uv].packages entries in install.toml; nothing to do")
+        logger.info("No [uv].packages entries in recipe.toml; nothing to do")
         return
 
     start_log_tee()

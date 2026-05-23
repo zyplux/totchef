@@ -16,12 +16,12 @@ After reboot, the egpu-prime service runs before SDDM and picks
 
 | File | Purpose |
 |---|---|
-| `src/install.toml` | unified declarative config: `[bash.<cli>]` vendor URL installers, `[cargo]`/`[uv]` package lists, `[apt]` packages + repos + pinning + debconf. Each top-level section drives `src/<section>.py`. |
+| `src/recipe.toml` | unified declarative config: `[bash.<cli>]` vendor URL installers, `[cargo]`/`[uv]` package lists, `[apt]` packages + repos + pinning + debconf. Each top-level section drives `src/<section>_cook.py`. |
 | `src/apps_config.toml` | Shared `[env]`; one section per app, dispatched on marker keys: `desktop` (launcher override + flags via `features`/`switches`), `local_state` (Chromium Local State flags), `argv_json` (Electron argv.json), `settings_json` (JSON settings file with `settings_env` block, e.g. Claude Code) |
 | `src/files/` | static assets installed verbatim (apt hooks, prefs, egpu-prime sources) |
 | `logs/` | timestamped per-run log (chowned to invoking user) |
 
-Edit `install.toml` (or `apps_config.toml`), re-run `just up`. Loaders only
+Edit `recipe.toml` (or `apps_config.toml`), re-run `just up`. Cooks only
 rewrite files whose contents would actually change, so idle re-runs are cheap.
 
 ## eGPU Rollback
