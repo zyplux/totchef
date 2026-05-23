@@ -1,6 +1,0 @@
-// Lift /etc/apt/trusted.gpg.d/'s immutable bit around each dpkg run so
-// do-release-upgrade and ubuntu-keyring updates can write new keys, then
-// restore it. The dir stays locked otherwise, blocking drive-by install
-// scripts that drop keys without going through apt/dpkg.
-DPkg::Pre-Invoke  { "/usr/bin/chattr -i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
-DPkg::Post-Invoke { "/usr/bin/chattr +i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };

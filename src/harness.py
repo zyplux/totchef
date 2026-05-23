@@ -1,5 +1,6 @@
-"""Shared scaffolding for sys-conf-py cooks: sudo re-exec, log teeing,
-streamed subprocess wrapping, idempotent file writes, binary discovery.
+"""Shared scaffolding for sys-conf-py cooks: log teeing, streamed subprocess
+wrapping, idempotent file writes, TOON logging, binary discovery. Sudo
+elevation is owned by chef.py now, so cooks no longer self-elevate.
 """
 
 import json
@@ -14,6 +15,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from loguru import logger
+from toon_format import encode
 
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
@@ -32,21 +34,6 @@ SOFT_FAIL_EXIT = 75
 logger.remove()
 logger.configure(extra={"runner": Path(sys.argv[0]).stem})
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
-
-
-def reexec_under_sudo(script: Path) -> None:
-    if os.geteuid() != 0:
-        logger.info("Re-running under sudo")
-        os.execvp(
-            "sudo",
-            [
-                "sudo",
-                f"--preserve-env={SHARED_LOG_ENV},{SECTION_ENV}",
-                sys.executable,
-                str(script),
-                *sys.argv[1:],
-            ],
-        )
 
 
 def load_section() -> dict:
@@ -88,6 +75,14 @@ def get_invoking_user() -> tuple[str, int, int, Path]:
         sys.exit("ERROR: SUDO_USER not set; run via sudo, not as root directly.")
     pw = pwd.getpwnam(sudo_user)
     return sudo_user, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
+
+
+def log_toon(rows: list[dict], note: str = "") -> None:
+    """Log a list of flat dicts as a TOON table, one logger line per row line."""
+    if note:
+        logger.info(note)
+    for line in encode(rows).splitlines():
+        logger.info(line)
 
 
 def run(

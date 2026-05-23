@@ -11,7 +11,8 @@ Also configures suspend behavior to avoid s2idle-related kernel oopses on
 this Tiger Lake + NVIDIA hybrid setup (see docs/investigations/sleep-crash.md):
 forces deep S3 via GRUB cmdline and pins NVIDIA power-management options.
 
-NVIDIA driver packages live in recipe.toml; run apt_cook.py first.
+NVIDIA driver packages live in recipe.toml; the [apt_pkg] cook runs first
+(this playbook declares depends_on = ["apt_pkg"]).
 """
 
 import re
@@ -22,7 +23,6 @@ from loguru import logger
 from toon_format import encode
 
 from harness import (
-    reexec_under_sudo,
     start_log_tee,
     stream_subprocess,
     write_if_changed,
@@ -149,8 +149,6 @@ def build_gpu_state_row() -> dict:
 
 
 def main() -> None:
-    reexec_under_sudo(SCRIPT)
-
     start_log_tee()
 
     install_egpu_prime()
