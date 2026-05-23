@@ -1,6 +1,6 @@
-"""Loader for [bash.<name>] entries — vendor `curl | bash` bootstrappers.
+"""Cook for [bash.<name>] entries — vendor `curl | bash` bootstrappers.
 
-Field semantics (per install.toml block):
+Field semantics (per recipe.toml block):
   url            installer URL, piped into bash
   bin            binary to probe for idempotency (default: subtable name)
   args           args appended after `bash -s --`
@@ -9,7 +9,7 @@ Field semantics (per install.toml block):
   pre_update     bash one-liner run via `bash -c` before update_action;
                  non-zero exit aborts the update as a soft failure
 
-Failure contract with main.py: install errors exit 1 (hard — downstream
+Failure contract with chef.py: install errors exit 1 (hard — downstream
 sections may depend on the tool). Update errors exit SOFT_FAIL_EXIT=75
 (soft — tool stays usable, run continues). Refuses to run as root: these
 installers write into $HOME.
@@ -117,7 +117,7 @@ def main() -> None:
 
     installs = load_section()
     if not installs:
-        logger.info("No [bash.*] entries in install.toml; nothing to do")
+        logger.info("No [bash.*] entries in recipe.toml; nothing to do")
         return
 
     start_log_tee()

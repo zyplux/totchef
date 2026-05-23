@@ -2,79 +2,73 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Purpose
+
+Declarative, idempotent Ubuntu/Kubuntu Wayland laptop config: apt repos + packages, eGPU auto-PRIME at boot, and Chromium/Electron GPU flags. Same script handles first-run bootstrap and ongoing upkeep — re-runnable; cooks only rewrite files whose contents would actually change.
+
 ## Commands
 
-- `just up` — full run: prompts for sudo once, then executes every loader (`src/main.py`).
+- `just up` — run the full configuration (`./src/chef.py`); prompts for sudo at the start.
 - `just lint` — `ruff check --fix` then `ruff format`.
-- `just tc` — lint, then `uvx pyright src` (type check uses the in-repo `.venv` per `pyproject.toml`).
-
-Python 3.14, dependencies pinned in `uv.lock`. Loaders run via `sys.executable`; `main.py` itself uses the `#!/usr/bin/env -S uv run` shebang. There is no test suite — correctness is validated by re-running `just up` on a real system and observing that already-correct state logs `Unchanged: …` instead of rewriting.
+- `just tc` — lint then `uvx pyright src` (depends on `lint`).
+- Markdown lint: `rumdl` (configured in `.rumdl.toml`; disables `MD033`/`MD013`).
+- Requires Python ≥3.14 (`pyproject.toml`). The only runtime deps are `loguru` and `toon-format`; everything else is stdlib.
+- There is **no test suite** — verification is done by re-running `just up` and confirming "Unchanged:" lines for everything you didn't intend to touch.
 
 ## Architecture
 
-### Orchestrator → loader dispatch
+### Orchestrator → cook contract
 
-`src/main.py` reads `src/install.toml`, then for each top-level `[section]` (file order = execution order) **spawns `src/<section>.py` as a subprocess** with the section's TOML slice serialized into the `SYS_CONF_PY_SECTION_JSON` env var. Subprocesses (not imports) are deliberate: loaders that need root call `harness.reexec_under_sudo()` and `os.execvp` into `sudo` — under an import model, that would take down the orchestrator.
+`src/chef.py` is the entry point. It does three things, in order:
 
-After install.toml sections, `STANDALONE_PLAYBOOKS` (`configure_gpu.py`, `configure_apps.py`) run unconditionally. These are **not** driven by `install.toml`; `configure_apps.py` reads its own `src/apps_config.toml`, `configure_gpu.py` reads static files from `src/files/`.
+1. Reads `src/recipe.toml` and walks its **top-level sections in file order** (TOML preserves order). For each section `[foo]`, it spawns `src/foo_cook.py` as a **subprocess** (not an import — so a cook can `execvp` into `sudo` without taking down the orchestrator). The section's TOML slice is passed via the `SYS_CONF_PY_SECTION_JSON` env var.
+2. After all recipe sections, runs `STANDALONE_PLAYBOOKS` unconditionally: `configure_gpu.py`, then `configure_apps.py`. These read their own config (static for GPU, `src/apps_config.toml` for apps) and aren't keyed off `recipe.toml`.
+3. Exit-code contract: `0` = success, `75` (`SOFT_FAIL_EXIT`) = soft fail (continue, name the section in a final stderr banner), anything else = hard fail (abort `just up`). `chef.py` itself exits 75 if any section soft-failed.
 
-A section in `install.toml` with no matching `src/<name>.py` is a hard error.
+**Adding a new tool category** means adding a `[newcategory]` section to `recipe.toml` *and* creating `src/newcategory_cook.py`. Missing cook → `chef.py` aborts with an error. File order in `recipe.toml` is execution order; `[apt]` is intentionally last because it re-execs under sudo and is the slowest.
 
-### Exit-code contract
+### Shared scaffolding (`src/harness.py`)
 
-- `0` — success
-- `75` (`SOFT_FAIL_EXIT`, sysexits `EX_TEMPFAIL`) — recoverable failure; `main.py` keeps going and prints a final stderr banner listing soft-failed sections, then itself exits 75.
-- anything else — hard failure; `main.py` aborts immediately.
+Every cook imports from here. Key utilities:
 
-A loader chooses soft vs. hard based on downstream impact. Example (`bash.py`): install failure → hard (downstream sections may depend on the tool); update failure → soft (the tool is still on disk and usable).
+- `reexec_under_sudo(script)` — if not root, `os.execvp` into `sudo` preserving `SYS_CONF_PY_LOG_FILE` + `SYS_CONF_PY_SECTION_JSON`. Used by cooks that need root (`apt_cook`, `configure_gpu`, `configure_apps`).
+- `load_section()` — read the slice that `chef.py` passed via env. Always call this **before** `reexec_under_sudo` so a missing-env or JSON error surfaces before the sudo prompt.
+- `start_log_tee()` — tees stdout/stderr into `logs/sys-conf-py-<timestamp>.log`. Honors `SYS_CONF_PY_LOG_FILE` if set (so all cooks in one run share one log file); pre-chowns log + dir to `SUDO_USER` so root-written lines keep the original owner.
+- `stream_subprocess(cmd, ...)` — runs a child with merged stdout/stderr piped line-by-line through `loguru`. Forces `TERM=dumb` + `NO_COLOR=1` + `start_new_session=True` to strip ANSI and block `/dev/tty` bypass. Splits CR-overwrites into separate log lines. Use this, not `subprocess.run`, for anything whose output you want in the log.
+- `write_if_changed(path, content, mode, note)` — the idempotency primitive: compare bytes, skip when equal, log `Unchanged:` vs `Writing  :`. Cooks should funnel **every** file write through this so re-runs stay quiet.
+- `find_binary(name)` — `shutil.which` first, then `BOOTSTRAP_BIN_DIRS` (`~/.cargo/bin`, `~/.bun/bin`, `~/.local/bin`, `~/.claude/local`). Needed because `rustup` / `bun` / `uv` install into those dirs before they're on `PATH`. **Don't call after `reexec_under_sudo`** — `Path.home()` was resolved at import.
+- `fetch_url(url)` — `urllib` with a custom `User-Agent: sys-conf-py` (some CDNs 403 the urllib default).
 
-### Shared scaffolding: `src/harness.py`
+### Cooks
 
-Every loader leans on this module — read it once before changing any loader:
+Each cook is a self-contained playbook with a documented soft/hard failure contract. Behaviors that matter when editing:
 
-- `load_section()` — parse the JSON slice `main.py` injected via `SYS_CONF_PY_SECTION_JSON`. Refuses to run if env var is missing (i.e. loader invoked directly instead of via `just up`).
-- `reexec_under_sudo(SCRIPT)` — if not root, `execvp` into `sudo` preserving `SYS_CONF_PY_LOG_FILE` and `SYS_CONF_PY_SECTION_JSON`.
-- `start_log_tee()` — dup stdout/stderr through `tee -a logs/<timestamp>.log`. Honours `SHARED_LOG_ENV` so every loader in one `just up` writes to the same file; pre-chowns the log to `SUDO_USER`.
-- `stream_subprocess(cmd, tag=…, …)` — line-streamed `Popen` whose merged stdout/stderr flows through `logger.info`. Sets `TERM=dumb`, `NO_COLOR=1`, and `start_new_session=True` to suppress ANSI and block `/dev/tty` bypass; splits `\r` so progress-bar redraws become separate log lines. **Use this, not `subprocess.run`, for any user-visible external command.**
-- `write_if_changed(path, content, mode=…, note=…)` — the project's idempotency primitive. Writes only when content differs and logs either `Writing  : <path>` or `Unchanged: <path>`. Returns True on change so callers can chain consequences (e.g. `systemctl daemon-reload`, `update-initramfs -u`).
-- `find_binary(name)` — PATH first, then `BOOTSTRAP_BIN_DIRS` (`~/.cargo/bin`, `~/.bun/bin`, `~/.local/bin`, `~/.claude/local`) — these hold tools that rustup/bun/uv install pre-PATH on a fresh box. Don't call after a sudo re-exec; `Path.home()` was resolved at import time.
-- `fetch_url(url)` — `urllib` with `User-Agent: sys-conf-py`. The custom UA is load-bearing — Signal's/herdr's CDNs 403 the urllib default.
+- **`bash_cook.py`** — `[bash.<name>]` entries; each is a `curl | bash` installer. Runs entries in parallel via `ThreadPoolExecutor`. Install failure = exit 1 (hard, downstream may depend on the tool); update failure = exit 75 (soft, tool stays usable). Refuses to run as root — installers write into `$HOME`. `update_action` semantics: list → `<bin> <args...>`; `"rerun-installer"` → re-pipe URL; absent → no update.
+- **`cargo_cook.py`** — `[cargo].packages`; one batched `cargo binstall --no-confirm pkg1 pkg2 …` (binstall does its own parallel resolution + per-crate skip-if-current). Bootstraps `cargo-binstall` via a slow source compile if missing. Refuses root.
+- **`uv_cook.py`** — `[uv].packages`; parallel `uv tool install` / `uv tool upgrade`, with the install/upgrade decision driven by a single up-front `uv tool list` parse. Refuses root.
+- **`apt_cook.py`** — heaviest cook. `load_section()` pre-sudo, then `reexec_under_sudo`. Drives `nala` (parallel downloads + `nala history undo`). Idempotent third-party repos: GPG key under `/usr/share/keyrings/<name>.gpg` + `.sources` file with `Signed-By:`. Hardening: `chattr +i` on `/etc/apt/trusted.gpg.d/` to block legacy installer scripts; a DPkg::Pre/Post-Invoke hook unlocks it around dpkg runs so `do-release-upgrade` still works. Cross-repo safety: an Ubuntu pin file upranks Ubuntu archives to priority 900 so a name-colliding third-party package loses to Ubuntu by default. Fails fast before `full-upgrade` if any requested package has `apt-cache policy` priority 0 (not available in any configured repo).
 
-### Root policy
+### Standalone playbooks
 
-Two camps, applied per-loader:
+- **`configure_gpu.py`** — installs `/usr/local/sbin/egpu-prime-switch` and `/etc/systemd/system/egpu-prime.service` (the service picks `prime-select nvidia` if the eGPU is on PCI, else `on-demand`, before SDDM starts at boot). Also writes `/etc/modprobe.d/nvidia-power.conf` and adds `mem_sleep_default=deep` to `GRUB_CMDLINE_LINUX_DEFAULT` — both mitigate the s2idle / NVIDIA suspend crash documented in `docs/investigations/sleep-crash.md`.
+- **`configure_apps.py`** — reads `src/apps_config.toml`. Dispatches per app section on which marker key(s) are present: `desktop` (per-user `.desktop` override under `~/.local/share/applications/` with `env` prefix + `--<switch>`es + `--enable-features=`), `local_state` (Chromium-family `Local State` JSON merge for `brave://flags`-style UI mirroring — **skipped if the target browser is running** to avoid racing the write), `argv_json` (Electron-style allowlisted flag merge, e.g. VS Code), `settings_json` (merge an `env` block into a JSON settings file, e.g. `~/.claude/settings.json`). If any `.desktop` was rewritten, `kbuildsycoca6 --noincremental` runs as the invoking user — without it, KDE's launcher keeps spawning apps with the previously-cached `Exec` line.
 
-| Loader | Writes to | Runs as |
-|---|---|---|
-| `bash.py`, `cargo.py`, `uv.py` | `$HOME` | invoking user (refuses root — toolchains would land under `/root`) |
-| `apt.py`, `configure_gpu.py`, `configure_apps.py` | `/etc`, `/usr/local`, systemd | re-execs under sudo via `harness.reexec_under_sudo()` |
+### Static assets (`src/files/`)
 
-`configure_apps.py` is the interesting case: it runs as root (writes touch `/etc`-adjacent areas) but explicitly `chown`s user-owned destinations (`~/.local/share/applications`, `~/.config/.../Local State`, `~/.vscode-insiders/argv.json`, `~/.claude/settings.json`) back to `SUDO_USER` after writing. Use `get_invoking_user()` for the uid/gid/home triple.
+Installed verbatim by the cooks above:
+- `ubuntu-archives.pref` — template for the `apt-preferences` pin (Ubuntu archives → 900).
+- `99-trusted-gpgd-autounlock` — DPkg pre/post hook to auto-unlock the immutable `trusted.gpg.d`.
+- `egpu-prime-switch`, `egpu-prime.service` — the boot-time PRIME selector + its systemd unit.
 
-### Declarative-config dispatch
+## Editing conventions specific to this repo
 
-- `src/install.toml` header is authoritative for section semantics and field meanings — read it before adding entries. Each top-level `[section]` maps 1:1 to `src/<section>.py`; subtables like `[apt.repo.<name>]` and `[bash.<cli>]` carry their identifier in the header.
-- `src/apps_config.toml` is consumed only by `configure_apps.py`. Sections are dispatched on **marker keys**: `desktop` → `.desktop` launcher override, `local_state` → Chromium Local State patch, `argv_json` → Electron argv.json merge, `settings_json` → JSON settings `env`-block merge. A section without any marker key is skipped (this is how `[chromium]` and `[env]` stay as shared config rather than being treated as apps).
-- `src/files/` ships static assets installed verbatim (apt hook, Ubuntu pin template, egpu-prime systemd unit + switch script).
+- **All file writes go through `write_if_changed`** so idle re-runs print `Unchanged:` and exit fast. Don't introduce a plain `path.write_text(...)` — it breaks the "rerun is cheap" invariant.
+- **All subprocesses that produce log-worthy output go through `stream_subprocess`** so they land in the tee'd log with consistent formatting; use `harness.run(...)` only for short utility calls whose stdout you'll capture programmatically.
+- **`load_section()` before `reexec_under_sudo`**, always — surface config errors before prompting for a password.
+- **Don't call `find_binary` after `reexec_under_sudo`** — `BOOTSTRAP_BIN_DIRS` was resolved against the *invoking* user's `$HOME` at import; under sudo, `Path.home()` would point at `/root`.
+- **User-writable tools refuse root** (`bash_cook`, `cargo_cook`, `uv_cook`). If you add a new user-scope cook, mirror that guard — toolchains landing under `/root` is a silent footgun.
+- **Repo configuration is data, not code**: a new package goes in `recipe.toml`, a new flag in `apps_config.toml`. The Python files should rarely change when adding/removing tools.
 
-### `[apt]` is intentionally last in `install.toml`
+## Recovery
 
-`apt.py` is the only loader that re-execs sudo *and* does the heavy lifting (full-upgrade, repo install, package install, autoremove). Earlier sections (`bash`, `cargo`, `uv`) bootstrap user-space tools first so the apt run can fail loudly without leaving the box half-configured. If you add a new section, think about whether it needs to run before or after `[apt]` and place it accordingly in the file.
-
-### Domain landmines already mitigated (don't re-introduce)
-
-These are recorded in the source as inline rationale; check before "simplifying":
-
-- **NVIDIA driver branch jumps:** Ubuntu rebuilds retired `nvidia-driver-*` metapackages as transitional shims that depend on a newer branch. Mitigation lives in `apt.py` + `install.toml` — every other `nvidia-driver-*` is pinned to priority `-1`. Don't remove the pin file generation.
-- **`/etc/apt/trusted.gpg.d` is chattr +i:** with a `DPkg::Pre/Post-Invoke` hook that unlocks it around dpkg runs. This blocks legacy install scripts from dropping global-trust keys while keeping `do-release-upgrade` working. The hook source is `src/files/99-trusted-gpgd-autounlock`.
-- **`apt-cache policy` priority 0 = "no candidate":** `apt.py` fails fast before `full-upgrade` if any requested package is unreachable (typo, missing repo, release-codename rename like `libva-nvidia-driver` → `nvidia-vaapi-driver`). The error message lists the common causes — preserve it.
-- **KDE `ksycoca` cache:** when a `.desktop` file changes, `configure_apps.py` runs `kbuildsycoca6 --noincremental` via `runuser`. Without this, KDE's launcher keeps spawning apps with the previously-cached `Exec=` line. The "desktop changed" bit is tracked separately from "anything changed" precisely so we only pay the rebuild when needed.
-- **VS Code `code-insiders` postinst rewrites the apt repo:** `[apt.debconf.code-insiders]` answers `code-insiders/add-microsoft-repo false` so our `[apt.repo.vscode]` survives package upgrades.
-- **Suspend / s2idle kernel oopses on this Tiger Lake + NVIDIA hybrid:** `configure_gpu.py` forces deep S3 via GRUB `mem_sleep_default=deep` and pins NVIDIA modprobe options (`NVreg_PreserveVideoMemoryAllocations=1`, `NVreg_DynamicPowerManagement=0x00`, `NVreg_EnableS0ixPowerManagement=0`). See `docs/investigations/sleep-crash.md` before touching those.
-
-## Conventions
-
-- **Idempotency is the contract.** Every state-changing action must be safe to run twice. Use `write_if_changed` for files; check `systemctl is-enabled`, `lsattr`, `apt-cache policy`, etc. before mutating. Log `Unchanged: <thing>` on no-ops — re-runs should be quiet.
-- **Choose `stream_subprocess` over `subprocess.run`** when a user should see the command's output in real time (apt, nala, systemctl, installer scripts). Reserve `subprocess.run` for short capturing calls (policy parsing, state probes).
-- **`logger.info` for every state-changing step** with a short note (`note=...`). The log file is what the user reads when something goes sideways; silent success is harder to debug than verbose success.
-- **Status tables → TOON, not ad-hoc text.** `toon_format.encode(rows)` renders policy/state summaries (see `apt.py:build_policy_row` and `configure_gpu.py:build_gpu_state_row`). Stay consistent.
+`docs/investigations/` contains write-ups of past failures (e.g. `sleep-crash.md` — the basis for the GRUB + modprobe NVIDIA tuning in `configure_gpu.py`). Logs live in `logs/sys-conf-py-<timestamp>.log`, one per `just up` run, chowned to the invoking user.

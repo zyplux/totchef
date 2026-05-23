@@ -1,10 +1,10 @@
-# install.toml — declarative config for sys-conf-py.
+# recipe.toml — declarative config for sys-conf-py.
 #
-# Sections drive loaders by name (file order = execution order):
-#   [bash.<name>] -> src/bash.py  (curl | bash CLIs)
-#   [cargo]       -> src/cargo.py (via cargo-binstall)
-#   [uv]          -> src/uv.py    (Python CLI tools)
-#   [apt]         -> src/apt.py   (packages, repos, debconf, pinning; last — re-execs sudo)
+# Sections drive cooks by name (file order = execution order):
+#   [bash.<name>] -> src/bash_cook.py  (curl | bash CLIs)
+#   [cargo]       -> src/cargo_cook.py (via cargo-binstall)
+#   [uv]          -> src/uv_cook.py    (Python CLI tools)
+#   [apt]         -> src/apt_cook.py   (packages, repos, debconf, pinning; last — re-execs sudo)
 #
 # Named subtables ([apt.repo.<name>], [bash.<cli>], [apt.debconf.<handle>])
 # carry their identifier in the section header; pure package lists stay arrays.

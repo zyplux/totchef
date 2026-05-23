@@ -1,4 +1,4 @@
-"""Shared scaffolding for sys-conf-py loaders: sudo re-exec, log teeing,
+"""Shared scaffolding for sys-conf-py cooks: sudo re-exec, log teeing,
 streamed subprocess wrapping, idempotent file writes, binary discovery.
 """
 
@@ -18,14 +18,14 @@ from loguru import logger
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 LOG_DIR = REPO_ROOT / "logs"
-INSTALL_TOML = SRC_DIR / "install.toml"
+RECIPE_TOML = SRC_DIR / "recipe.toml"
 
 LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <22} {level: <7} {message}"
 
 SHARED_LOG_ENV = "SYS_CONF_PY_LOG_FILE"
 SECTION_ENV = "SYS_CONF_PY_SECTION_JSON"
 
-# sysexits.h EX_TEMPFAIL: loader -> main.py signal for recoverable failure.
+# sysexits.h EX_TEMPFAIL: cook -> chef.py signal for recoverable failure.
 SOFT_FAIL_EXIT = 75
 
 # Configured at import so pre-sudo messages get timestamped too.
@@ -50,11 +50,11 @@ def reexec_under_sudo(script: Path) -> None:
 
 
 def load_section() -> dict:
-    """Read the install.toml slice main.py passed us via SECTION_ENV."""
+    """Read the recipe.toml slice chef.py passed us via SECTION_ENV."""
     payload = os.environ.get(SECTION_ENV)
     if payload is None:
         sys.exit(
-            f"ERROR: {SECTION_ENV} not set; run via `just up`, not this loader directly."
+            f"ERROR: {SECTION_ENV} not set; run via `just up`, not this cook directly."
         )
     return json.loads(payload)
 

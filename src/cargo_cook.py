@@ -1,5 +1,5 @@
 """
-Idempotent cargo installer/updater driven by the [cargo] section of install.toml.
+Idempotent cargo installer/updater driven by the [cargo] section of recipe.toml.
 
 Hands every requested crate to a single `cargo binstall --no-confirm pkg1 pkg2 ...`
 call. cargo-binstall resolves each crate's latest release, compares against the
@@ -21,7 +21,7 @@ Bootstraps cargo-binstall via `cargo install cargo-binstall` if it isn't
 already on disk. That's a slow source compile, but only happens once per
 fresh system; thereafter cargo-binstall is in [cargo].packages and updates
 itself in the same batch as everything else (version-aware, ~1s). Requires
-cargo (from rustup) — bash.py must run first.
+cargo (from rustup) — bash_cook.py must run first.
 
 Runs as the invoking user — cargo writes into ~/.cargo, so the script refuses
 to run as root (toolchains would land under /root otherwise).
@@ -48,7 +48,7 @@ def main() -> None:
     section = load_section()
     requested = section.get("packages", [])
     if not requested:
-        logger.info("No [cargo].packages entries in install.toml; nothing to do")
+        logger.info("No [cargo].packages entries in recipe.toml; nothing to do")
         return
 
     start_log_tee()

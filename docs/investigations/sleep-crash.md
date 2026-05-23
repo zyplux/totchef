@@ -36,7 +36,7 @@ less tolerant of any follow-on patching anomaly.
 3. `nvidia-{suspend,resume,hibernate}.service` enabled.
 4. `update-initramfs -u` rerun when modprobe file changes.
 
-`linux-crashdump` added to `apt_config.toml` so the next oops is captured to
+`linux-crashdump` added to `recipe.toml` so the next oops is captured to
 `/var/crash` instead of scrolling off-screen.
 
 ## Verify after reboot
