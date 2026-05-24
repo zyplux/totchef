@@ -72,9 +72,9 @@ class UrlCook(VersionedCook):
 
     def list_installed(self) -> dict[str, str]:
         return {
-            name: str(path)
+            name: "present"
             for name, block in self.installs.items()
-            if (path := find_binary(block.bin or name))
+            if find_binary(block.bin or name)
         }
 
     def latest_available(self, names: list[str]) -> dict[str, str | None]:

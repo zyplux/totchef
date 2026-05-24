@@ -69,7 +69,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
             if installed is None:
                 action, changed = "would install", True
             elif available is None:
-                action, changed = "installed", False
+                action, changed = "would update", True
             elif available != installed:
                 action, changed = "would upgrade", True
             else:
@@ -116,7 +116,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
                 name,
                 cook.manager,
                 before or "(none)",
-                fmt_latest(latest.get(name) or after),
+                fmt_latest(latest.get(name)),
                 action,
                 changed,
             )
