@@ -77,6 +77,27 @@ def wait_for_nvidia(retries: int = 10) -> bool:
     return False
 
 
+def nvidia_drm_node_ready() -> bool:
+    for link in DRI_BY_PATH.glob("pci-*-card"):
+        address = link.name.removeprefix("pci-").removesuffix("-card")
+        if read_pci_attr(address, "vendor") == NVIDIA_VENDOR and link.exists():
+            return True
+    return False
+
+
+def wait_for_nvidia_drm_node(retries: int = 15) -> bool:
+    # The eGPU shows up on the PCI bus (wait_for_nvidia) seconds before nvidia-drm
+    # finishes initializing and its /dev/dri node + by-path symlink appear. The
+    # env file resolves those paths, so it must wait for them or it silently
+    # writes nothing (lost-race → KWIN_DRM_DEVICES never applied).
+    for attempt in range(retries):
+        if nvidia_drm_node_ready():
+            return True
+        if attempt < retries - 1:
+            time.sleep(1)
+    return False
+
+
 def bind_fake_boot_vga(value: str, target: Path) -> bool:
     fake = BOOT_VGA_FAKES / ("one" if value == "1" else "zero")
     result = run("mount", "--bind", "-o", "ro", str(fake), str(target))
@@ -173,6 +194,8 @@ def main() -> int:
     if nvidia_present:
         want = "nvidia"
         flip_boot_vga()
+        if not wait_for_nvidia_drm_node():
+            log("nvidia DRM node did not appear in time; compositor hint skipped")
         write_compositor_primary()
     else:
         want = "on-demand"
