@@ -1,25 +1,34 @@
 # recipe.toml — declarative config for sys-conf-py.
 #
-# Each top-level section drives one cook, src/<section>_cook.py:
-#   [url.<name>]       -> url_cook.py       (curl | bash vendor installers)
-#   [cargo]            -> cargo_cook.py     (crates via cargo-binstall)
-#   [uv]               -> uv_cook.py        (Python CLI tools)
-#   [bash.<name>]      -> bash_cook.py      (generic idempotent shell snippets)
-#   [apt_repo.<name>]  -> apt_repo_cook.py  (third-party apt repos + keys)
-#   [apt_pkg]          -> apt_pkg_cook.py   (package install/upgrade via nala)
-#   [snap]             -> snap_cook.py      (snap install/refresh via snapd)
-#   [configure_gpu]    -> configure_gpu.py  (egpu-prime boot service + sleep tuning)
-#   [configure_apps]   -> configure_apps.py (per-app GPU flags)
+# Each top-level section maps to one cook in src/cooks/ by name: section [foo] ->
+# cooks/foo_cook.py, or cooks/foo_root_cook.py if it is an always-root cook. Chef
+# imports the sole VersionedCook/StateCook subclass there (no central registry).
+#   [url.<name>]       -> cooks/url_cook             (curl | bash vendor installers)
+#   [cargo]            -> cooks/cargo_cook           (crates via cargo-binstall)
+#   [uv]               -> cooks/uv_cook              (Python CLI tools)
+#   [file.<name>]      -> cooks/file_cook            (install a file with exact content)
+#   [bash.<name>]      -> cooks/bash_cook            (idempotent shell snippets)
+#   [apt_repo.<name>]  -> cooks/apt_repo_root_cook   (third-party apt repos + keys)
+#   [apt_pkg]          -> cooks/apt_pkg_root_cook    (package install via nala)
+#   [snap]             -> cooks/snap_root_cook       (snap install/refresh)
+#   [desktop]          -> cooks/desktop_cook         (.desktop Exec= overrides)
+#   [chromium_flags]   -> cooks/chromium_flags_cook  (browser GPU-flag JSON)
+#   [settings]         -> cooks/settings_cook        (JSON env-block merge)
 #
-# Two reserved fields per top-level section control scheduling and privilege.
-# chef.py reads them, then strips them before handing the section to its cook:
-#   needs_root  bool  (default false)  chef spawns the cook under sudo.
-#   depends_on  list  (default [])     section names that must finish first;
-#                                      chef topo-sorts via graphlib. File order
-#                                      is only a tiebreaker among ready nodes.
-#
-# Named subtables ([apt_repo.<name>], [url.<cli>], [bash.<name>]) carry their
-# identifier in the header; pure package lists stay arrays.
+# A section with named subtables ([url.<name>], [file.<name>], [bash.<name>],
+# [apt_repo.<name>]) expands to one graph node per entry; a section with plain
+# data ([apt_pkg]) or none ([desktop]) is a single node. Two reserved fields are
+# read by chef per entry (falling back to the section, then the cook class) and
+# stripped before the slice reaches the cook:
+#   needs_root  bool  true -> chef runs the node in-process as root; false ->
+#                     chef forks + drops to the invoking user. Default is the
+#                     cook's own: an always-root *_root_cook is true, every other
+#                     cook false. Granted per entry, case by case (least
+#                     privilege) — there is no blanket section default.
+#   depends_on  list  (default [])  node ids that must finish first; a name that
+#                     is only a section (e.g. "bash") fans out to all its entry
+#                     nodes, a name that is an entry ("url.rustup") pins just that
+#                     one. chef topo-sorts via graphlib.
 
 # ---------------------------------------------------------------------------
 # url — vendor `curl | bash` CLIs
@@ -31,16 +40,16 @@
 #   args           appended after `bash -s --`
 #   update_action  list -> `<bin> <update_action...>`; "rerun-installer" ->
 #                  re-pipe url; absent -> no update
-#   pre_update     bash one-liner run via `bash -c` before update_action.
+#   update_guard   bash one-liner run via `bash -c` before update_action (a
+#                  url_cook-internal guard, not chef's StateCook pre_hook).
 #                  `<bin>`'s dir is prepended to PATH. Non-zero exit aborts
-#                  the update as a soft failure. Used by herdr: its
+#                  the update as a soft failure. Must be an idempotent guard
+#                  (it can also run on first install). Used by herdr: its
 #                  `server stop` returns when the API ack lands, ~700ms before
 #                  the server process actually exits — so the one-liner stops
 #                  AND polls `herdr status server` until "not running".
 
 [url]
-needs_root = false
-depends_on = []
 
 [url.bun]
 url = "https://bun.sh/install"
@@ -62,18 +71,17 @@ update_action = ["self", "update"]
 [url.herdr]
 url = "https://herdr.dev/install.sh"
 update_action = ["update"]
-pre_update = "herdr server stop || true; for _ in {1..30}; do herdr status server | grep -q 'not running' && exit 0; sleep 0.1; done; exit 1"
+update_guard = "command -v herdr >/dev/null || exit 0; herdr server stop || true; for _ in {1..30}; do herdr status server | grep -q 'not running' && exit 0; sleep 0.1; done; exit 1"
 
 [url.agy]
 url = "https://antigravity.google/cli/install.sh"
 
 # ---------------------------------------------------------------------------
-# cargo — crates via cargo-binstall (needs rustup/cargo from [url])
+# cargo — crates via cargo-binstall (needs rustup/cargo from [url.rustup])
 # ---------------------------------------------------------------------------
 
 [cargo]
-needs_root = false
-depends_on = ["url"]
+depends_on = ["url.rustup"]
 packages = [
     "cargo-binstall",
     "cargo-update",
@@ -84,45 +92,112 @@ packages = [
 
 # ---------------------------------------------------------------------------
 # uv — Python CLI tools, isolated venvs symlinked into ~/.local/bin
-# (needs uv from [url])
+# (needs uv from [url.uv])
 # ---------------------------------------------------------------------------
 
 [uv]
-needs_root = false
-depends_on = ["url"]
+depends_on = ["url.uv"]
 packages = [
     "ruff",
 ]
 
 # ---------------------------------------------------------------------------
-# bash — root apt setup expressed as idempotent shell snippets.
-#
-# These four prepare the apt environment before any repo or package work, so
-# [apt_repo] and [apt_pkg] declare depends_on = ["bash", ...]. Entries run
-# sequentially in file order. File writes go through `write-if-changed` (a
-# shim bash_cook puts on $PATH wrapping harness.write_if_changed) so re-runs
-# stay quiet.
+# file — install a file with exact content (file_cook). Each [file.<name>] sets
+# path + (content | source under src/files/) + optional mode/pre_hook/post_hook;
+# chef diffs by content hash and fires `post_hook` only when the file changed.
+# file_cook is privilege-agnostic, so needs_root is granted per entry: every
+# current entry writes a system path (/etc, /usr/local) so all set it, but a
+# user-scope file would omit it. depends_on is per-entry too, ranging from
+# "needed before apt" (write_if_changed, trusted_gpgd, grub) to "needs the
+# NVIDIA driver first" (egpu/nvidia, depends_on = ["apt_pkg"]).
 # ---------------------------------------------------------------------------
 
-[bash]
-needs_root = true
-depends_on = []
+[file]
 
-# Hardening: /etc/apt/trusted.gpg.d/ is chattr +i to block legacy/drive-by
-# install scripts that drop keys there outside apt's control. A DPkg
-# Pre/Post-Invoke hook lifts the immutable bit only around dpkg runs so apt
-# and do-release-upgrade still work — a release upgrade aborted once when
-# ubuntu-keyring couldn't write a new key into the locked dir.
-[bash.trusted_gpgd_hardening]
-install_or_update = '''
-cat <<'EOF' | write-if-changed /etc/apt/apt.conf.d/99-trusted-gpgd-autounlock
+# The shim [bash.*] snippets pipe file writes through. Nothing depends on apt,
+# so it runs early — bash.ubuntu_pin depends_on it.
+[file.write_if_changed]
+needs_root = true
+source = "write-if-changed.py"
+path = "/usr/local/bin/write-if-changed"
+mode = "0755"
+
+# A DPkg Pre/Post-Invoke hook that lifts the /etc/apt/trusted.gpg.d/ immutable
+# bit only around dpkg runs (so apt + do-release-upgrade still write keys there),
+# blocking drive-by key drops the rest of the time. The `post` hook sets the bit
+# on first install; thereafter the Post-Invoke hook in this file re-asserts it
+# after every apt run.
+[file.trusted_gpgd_hardening]
+needs_root = true
+path = "/etc/apt/apt.conf.d/99-trusted-gpgd-autounlock"
+mode = "0644"
+content = """
 // Lift trusted.gpg.d's immutable bit around each dpkg run, then restore it.
 DPkg::Pre-Invoke  { "/usr/bin/chattr -i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
 DPkg::Post-Invoke { "/usr/bin/chattr +i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
-EOF
-lsattr -d /etc/apt/trusted.gpg.d/ | awk '{print $1}' | grep -q i || chattr +i /etc/apt/trusted.gpg.d/
-'''
-check_installed = "lsattr -d /etc/apt/trusted.gpg.d/ | awk '{print $1}' | grep -q i && echo immutable || echo mutable"
+"""
+post_hook = "lsattr -d /etc/apt/trusted.gpg.d/ 2>/dev/null | awk '{print $1}' | grep -q i || chattr +i /etc/apt/trusted.gpg.d/"
+
+# Force deep S3 suspend (s2idle crash mitigation; docs/investigations/sleep-crash.md).
+# A /etc/default/grub.d drop-in, sourced by grub-mkconfig after /etc/default/grub;
+# it re-normalizes GRUB_CMDLINE_LINUX_DEFAULT so the generated cmdline carries
+# mem_sleep_default=deep exactly once (even if it was set in-place before).
+# Independent of the NVIDIA driver, so it keeps the default depends_on = [].
+[file.grub_deep_sleep]
+needs_root = true
+path = "/etc/default/grub.d/99-mem-sleep-deep.cfg"
+mode = "0644"
+content = """
+# Force deep S3 suspend (s2idle crash mitigation; docs/investigations/sleep-crash.md).
+GRUB_CMDLINE_LINUX_DEFAULT="$(echo "$GRUB_CMDLINE_LINUX_DEFAULT" | sed -E 's/ *mem_sleep_default=[^ "]*//g') mem_sleep_default=deep"
+"""
+post_hook = "update-grub"
+
+# eGPU-prime boot selector + its systemd unit. The boot-time eGPU-primary
+# conditionality stays in egpu-prime-switch itself. Needs prime-select (driver).
+[file.egpu_switch]
+needs_root = true
+source = "egpu-prime-switch.py"
+path = "/usr/local/sbin/egpu-prime-switch"
+mode = "0755"
+depends_on = ["apt_pkg"]
+
+[file.egpu_service]
+needs_root = true
+source = "egpu-prime.service"
+path = "/etc/systemd/system/egpu-prime.service"
+mode = "0644"
+depends_on = ["apt_pkg"]
+post_hook = "systemctl daemon-reload; systemctl enable egpu-prime.service"
+
+# NVIDIA suspend / runtime-PM modprobe options (also part of the s2idle crash
+# mitigation). Needs the driver installed so update-initramfs has it to bake in.
+[file.nvidia_power]
+needs_root = true
+path = "/etc/modprobe.d/nvidia-power.conf"
+mode = "0644"
+depends_on = ["apt_pkg"]
+content = """
+options nvidia NVreg_PreserveVideoMemoryAllocations=1
+options nvidia NVreg_DynamicPowerManagement=0x00
+options nvidia NVreg_EnableS0ixPowerManagement=0
+"""
+post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service 2>/dev/null || true; update-initramfs -u"
+
+# ---------------------------------------------------------------------------
+# bash — apt setup expressed as idempotent shell snippets.
+#
+# These prepare the apt environment before any repo or package work, so
+# [apt_repo]/[apt_pkg] depend on them. Chef owns the run/skip decision: each
+# entry declares a read-only `check_installed` probe and the `desired` token
+# meaning "already done"; chef runs `install_or_update` only when they differ.
+# bash_cook is privilege-agnostic, so needs_root is granted per entry (every
+# current snippet writes /etc or drives apt, so all set it). Per-entry depends_on
+# is precise — only ubuntu_pin uses `write-if-changed`, so only it depends on
+# [file.write_if_changed].
+# ---------------------------------------------------------------------------
+
+[bash]
 
 # Cross-repo safety: uprank Ubuntu main/updates/security to priority 900 (the
 # default is 500) so a third-party package colliding by name with an Ubuntu
@@ -130,6 +205,7 @@ check_installed = "lsattr -d /etc/apt/trusted.gpg.d/ | awk '{print $1}' | grep -
 # Backports is intentionally NOT upranked (it ships NotAutomatic: yes, prio 1).
 # For a per-package third-party override, drop a pin > 900 in preferences.d/.
 [bash.ubuntu_pin]
+needs_root = true
 install_or_update = '''
 . /etc/os-release
 rel="${VERSION_CODENAME:-$UBUNTU_CODENAME}"
@@ -150,23 +226,29 @@ Pin-Priority: 900
 EOF
 '''
 check_installed = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
+desired = "present"
+depends_on = ["file.write_if_changed"]
 
 # Stop code-insiders' postinst from rewriting our [apt_repo.vscode] source.
 # debconf-set-selections is idempotent; runs before any apt transaction.
 [bash.code_insiders_debconf]
+needs_root = true
 install_or_update = "echo 'code-insiders code-insiders/add-microsoft-repo boolean false' | debconf-set-selections"
-check_installed = "debconf-show code-insiders 2>/dev/null | grep -m1 add-microsoft-repo || echo unset"
+check_installed = "debconf-show code-insiders 2>/dev/null | grep -q 'add-microsoft-repo: false' && echo set || echo unset"
+desired = "set"
 
 # Prerequisites for repo/key handling and the package transaction. nala is the
 # package frontend used by [apt_pkg]; curl/gnupg/ca-certificates back key
 # fetch + dearmor. Bootstraps from a clean system that only has uv.
 [bash.apt_prereqs]
+needs_root = true
 install_or_update = '''
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends curl gnupg ca-certificates nala
 '''
 check_installed = "command -v nala >/dev/null && echo present || echo absent"
+desired = "present"
 
 # ---------------------------------------------------------------------------
 # apt_repo — third-party apt repos. GPG key under /usr/share/keyrings/<name>.gpg
@@ -177,8 +259,7 @@ check_installed = "command -v nala >/dev/null && echo present || echo absent"
 # ---------------------------------------------------------------------------
 
 [apt_repo]
-needs_root = true
-depends_on = ["bash"]
+depends_on = ["bash.apt_prereqs"]
 
 [apt_repo."debian.griffo.io"]
 key_url = "https://debian.griffo.io/EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc"
@@ -208,7 +289,6 @@ suites = "xenial"
 # ---------------------------------------------------------------------------
 
 [apt_pkg]
-needs_root = true
 depends_on = ["bash", "apt_repo"]
 packages = [
     "just",
@@ -248,23 +328,28 @@ packages = [
 # ---------------------------------------------------------------------------
 
 [snap]
-needs_root = true
-depends_on = []
 packages = [
     "firefox",
     "chromium",
 ]
 
 # ---------------------------------------------------------------------------
-# Standalone playbooks — internal logic unchanged (Phase 1); declared here so
-# chef dispatches them through the same graph + privilege path as every cook.
-# Both run after the package install they depend on.
+# Per-app config (apps_config.toml) split by mechanism into three user-scope
+# cooks (needs_root = false -> chef forks + drops privilege, so they write into
+# $HOME directly, no chown). All run after the packages they tune are installed.
+#
+#   [desktop]         desktop_cook        — per-user .desktop Exec= overrides
+#                                            (kbuildsycoca refresh as a post hook)
+#   [chromium_flags]  chromium_flags_cook — Chromium Local State + Electron
+#                                            argv.json GPU-flag injection
+#   [settings]        settings_cook       — merge an env block into a JSON file
 # ---------------------------------------------------------------------------
 
-[configure_gpu]
-needs_root = true
+[desktop]
 depends_on = ["apt_pkg"]
 
-[configure_apps]
-needs_root = true
+[chromium_flags]
+depends_on = ["apt_pkg"]
+
+[settings]
 depends_on = ["apt_pkg"]

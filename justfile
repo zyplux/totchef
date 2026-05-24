@@ -1,6 +1,9 @@
 up:
     ./src/chef.py
 
+plan:
+    ./src/chef.py --dry-run
+
 _prime-sudo:
     sudo -v
 

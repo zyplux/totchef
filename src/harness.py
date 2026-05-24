@@ -77,6 +77,30 @@ def get_invoking_user() -> tuple[str, int, int, Path]:
     return sudo_user, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
 
 
+def become_user() -> None:
+    """The one privilege-drop chokepoint (Phase 2). Chef runs as root and forks
+    a child for each user-scope cook; the child calls this before doing any
+    work. Drops gid first (root can't set gid after dropping uid), reconstructs
+    the supplementary groups, then drops uid, and repoints HOME / USER / PATH at
+    the invoking user so toolchains write into the user's $HOME, not /root."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if not sudo_user:
+        sys.exit("ERROR: SUDO_USER not set; chef must be launched via sudo.")
+    pw = pwd.getpwnam(sudo_user)
+    os.setgid(pw.pw_gid)
+    os.initgroups(sudo_user, pw.pw_gid)
+    os.setuid(pw.pw_uid)
+    home = pw.pw_dir
+    os.environ["HOME"] = home
+    os.environ["USER"] = sudo_user
+    os.environ["LOGNAME"] = sudo_user
+    os.environ["XDG_CACHE_HOME"] = f"{home}/.cache"
+    # Toolchains install into these before they are on PATH; prepend so a fresh
+    # bootstrap can find what an earlier cook just dropped here.
+    bootstrap = ":".join(str(d) for d in bootstrap_bin_dirs())
+    os.environ["PATH"] = f"{bootstrap}:{os.environ.get('PATH', '')}"
+
+
 def log_toon(rows: list[dict], note: str = "") -> None:
     """Log a list of flat dicts as a TOON table, one logger line per row line."""
     if note:
@@ -160,20 +184,26 @@ def write_if_changed(
     return True
 
 
-BOOTSTRAP_BIN_DIRS = (
-    Path.home() / ".cargo/bin",
-    Path.home() / ".bun/bin",
-    Path.home() / ".local/bin",
-    Path.home() / ".claude/local",
-)
+def bootstrap_bin_dirs() -> tuple[Path, ...]:
+    """Dirs rustup/bun/uv install into before they are on PATH. Resolved from
+    the current $HOME at call time (not import time) so it follows become_user's
+    privilege drop in a forked child."""
+    home = Path.home()
+    return (
+        home / ".cargo/bin",
+        home / ".bun/bin",
+        home / ".local/bin",
+        home / ".claude/local",
+    )
 
 
 def find_binary(name: str) -> Path | None:
-    """PATH first, then BOOTSTRAP_BIN_DIRS (rustup/bun/uv land here pre-PATH).
-    Don't call after sudo re-exec — Path.home() was resolved at import."""
+    """PATH first, then the bootstrap dirs (rustup/bun/uv land there pre-PATH).
+    Only call from user-scope context — the bootstrap dirs follow $HOME, which
+    become_user repoints in the child; calling as root would probe /root."""
     if found := shutil.which(name):
         return Path(found)
-    for d in BOOTSTRAP_BIN_DIRS:
+    for d in bootstrap_bin_dirs():
         candidate = d / name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate

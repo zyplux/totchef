@@ -1,9 +1,9 @@
-# apps_config.toml — config for configure_apps.py. The [chromium] table holds features
+# apps_config.toml — config for the per-app cooks (desktop_cook, chromium_flags_cook,
+# settings_cook), loaded via apps_config.py. The [chromium] table holds features
 # shared by all Chromium-derived apps on this box; each app's own `features` are
-# appended to those. Each app is its own [<app>] table identified by a `desktop`
-# key, optionally with local_state(+_flags) for Chromium Local State or
-# argv_json(+argv) for Electron. (configure_gpu.py installs the egpu-prime boot
-# service and reads no config here — its inputs are static assets in files/.)
+# appended to those. Each app is its own [<app>] table, dispatched by its marker
+# key(s): `desktop` -> desktop_cook; `local_state`(+_flags) / `argv_json`(+argv)
+# -> chromium_flags_cook; `settings_json`(+settings_env) -> settings_cook.
 
 # Shared by every Chromium-derived app on this box.
 # VaapiOnNvidiaGPUs is mandatory: Chromium disables VA-API whenever an NVIDIA GPU

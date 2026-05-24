@@ -1,0 +1,105 @@
+"""VersionedCook for the [cargo] section — crates via cargo-binstall.
+
+cargo-binstall resolves each crate's latest release, compares against the
+installed version in ~/.cargo/.crates.toml, and installs / upgrades / skips per
+crate in one batched, parallel `cargo binstall --no-confirm pkg1 pkg2 ...`. So
+this cook reports installed versions for chef's diff/report, but hands chef's
+whole install+upgrade set to a single binstall call rather than splitting it —
+binstall does the per-crate skip-if-current itself, and one process avoids
+per-crate cache-lock contention. `latest_available` is left as "—": binstall
+already knows the latest, and re-deriving it here would be a second network
+round-trip per crate for no gain.
+
+Bootstraps cargo-binstall via a one-time source `cargo install` if it isn't on
+disk; thereafter it is in [cargo].packages and updates itself in the same batch.
+Requires cargo (from rustup in [url], so depends_on = ["url"]).
+
+Runs as the invoking user (chef forks + drops privilege) — cargo writes into
+~/.cargo, which must not land under /root.
+"""
+
+import subprocess
+from pathlib import Path
+
+from loguru import logger
+
+from cook_base import Result, VersionedCook, debug_main
+from harness import find_binary, stream_subprocess
+
+
+def parse_installed_crates() -> dict[str, str]:
+    """Map crate name -> version from `cargo install --list`. Each crate is
+    announced by a column-0 line `<name> v<version>:`; binaries are indented."""
+    cargo = find_binary("cargo")
+    if not cargo:
+        return {}
+    completed = subprocess.run(
+        [str(cargo), "install", "--list"], capture_output=True, text=True
+    )
+    versions: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        if not line or line[0].isspace():
+            continue
+        tokens = line.rstrip(":").split()
+        if len(tokens) >= 2 and tokens[1].startswith("v"):
+            versions[tokens[0]] = tokens[1].lstrip("v")
+    return versions
+
+
+class CargoCook(VersionedCook):
+    manager = "cargo-binstall"
+    user_only_reason = "cargo writes into ~/.cargo"
+
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        self.packages: list[str] = section.get("packages", [])
+
+    def requested(self) -> list[str]:
+        return self.packages
+
+    def list_installed(self) -> dict[str, str]:
+        return parse_installed_crates()
+
+    def latest_available(self, names: list[str]) -> dict[str, str | None]:
+        return dict.fromkeys(names)
+
+    def _ensure_binstall(self) -> Path | None:
+        if binstall := find_binary("cargo-binstall"):
+            return binstall
+        cargo = find_binary("cargo")
+        if not cargo:
+            return None
+        logger.info(
+            "cargo-binstall missing — bootstrapping via `cargo install` "
+            "(slow source compile; happens once per fresh system)"
+        )
+        stream_subprocess([str(cargo), "install", "cargo-binstall"])
+        return find_binary("cargo-binstall")
+
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+        targets = to_install + to_upgrade
+        if not targets:
+            return Result("ok")
+
+        if not find_binary("cargo"):
+            return Result(
+                "hard_fail",
+                "cargo not found — the [url] section (rustup) must run before [cargo].",
+            )
+        binstall = self._ensure_binstall()
+        if not binstall:
+            return Result(
+                "hard_fail",
+                "cargo-binstall is not on PATH or in ~/.cargo/bin after bootstrap. "
+                "Check cargo's install root.",
+            )
+
+        logger.info(
+            f"Installing/upgrading {len(targets)} crate(s): " + ", ".join(targets)
+        )
+        stream_subprocess([str(binstall), "--no-confirm", *targets])
+        return Result("ok")
+
+
+if __name__ == "__main__":
+    debug_main(CargoCook)

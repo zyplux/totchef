@@ -1,124 +1,123 @@
 #!/usr/bin/env -S uv run
-"""Orchestrator for `just up`.
+"""Orchestrator for `just up` (Phase 2).
 
-Reads src/recipe.toml, builds a dependency graph from each section's
-`depends_on`, and walks it in topological order (file order breaks ties).
-For each section it spawns src/<section>_cook.py — or src/<section>.py for the
-standalone playbooks — as a subprocess (not an import, so the boundary is
-preserved for Phase 2). The section's TOML slice, minus the reserved
-`needs_root` / `depends_on` keys, is handed over via SYS_CONF_PY_SECTION_JSON.
+Chef runs as root and owns all idempotency/diff decisions; cooks are thin
+managers that only probe and act. This module is the thin top: re-exec as root,
+load the recipe, hand off, and report. The work is split across:
 
-Chef owns sudo elevation: a `needs_root = true` section is spawned under sudo;
-a `needs_root = false` section is spawned directly. Chef refuses to run a
-non-root section as root (toolchains would land under /root).
+- recipe_graph.py  recipe.toml -> validated DAG of Nodes (+ cook-class lookup).
+- cook_runner.py   the execution engine: diff each cook, run pre/post hooks,
+                   and schedule nodes concurrently (root in-process, user forked
+                   through become_user()).
 
-Exit-code contract: 0 success, 75 soft fail (continue), other hard fail
-(abort). Soft-failed sections are listed in a final stderr banner; chef.py
-also exits 75 if any soft-failed.
+Flow:
+1. ensure_root() re-execs chef under sudo if it isn't root yet (so `just up`
+   still prompts for the password once); SUDO_USER then names the invoking user.
+2. validate() parses the recipe into nodes and checks the graph is acyclic and
+   every section resolves to a cook.
+3. execute() walks the graph, dispatching ready nodes concurrently and returning
+   each node's CookResult.
+4. print_report() shows a compact, changes-first table; `--dry-run` probes only
+   and prints the full inventory without acting.
+
+Exit codes: 0 success, 75 soft fail (named in a banner), 1 hard fail (aborts).
 """
 
-import json
 import os
-import subprocess
 import sys
 import tomllib
 from datetime import datetime
-from graphlib import CycleError, TopologicalSorter
-from pathlib import Path
 
-from harness import LOG_DIR, RECIPE_TOML, SECTION_ENV, SHARED_LOG_ENV, SOFT_FAIL_EXIT
+import typer
+from loguru import logger
 
-SRC_DIR = Path(__file__).resolve().parent
+from cook_base import CookResult
+from cook_runner import execute
+from harness import (
+    LOG_DIR,
+    RECIPE_TOML,
+    SHARED_LOG_ENV,
+    SOFT_FAIL_EXIT,
+    log_toon,
+    start_log_tee,
+)
+from recipe_graph import validate
 
-META_KEYS = ("needs_root", "depends_on")
 
-
-def resolve_cook(section: str) -> Path:
-    """Map a section name to its script: <section>_cook.py, falling back to
-    <section>.py for the standalone playbooks (configure_gpu, configure_apps)."""
-    for candidate in (SRC_DIR / f"{section}_cook.py", SRC_DIR / f"{section}.py"):
-        if candidate.exists():
-            return candidate
-    sys.exit(
-        f"ERROR: no cook for [{section}] "
-        f"(expected {section}_cook.py or {section}.py in {SRC_DIR})."
+def ensure_root() -> None:
+    """Re-exec under sudo if not already root, preserving argv and the shared
+    log path. sudo sets SUDO_USER, which become_user() drops back to."""
+    if os.geteuid() == 0:
+        return
+    os.execvp(
+        "sudo",
+        ["sudo", f"--preserve-env={SHARED_LOG_ENV}", sys.executable, *sys.argv],
     )
 
 
-def plan_order(config: dict) -> list[str]:
-    """Topological order of sections honoring `depends_on`; file order is the
-    tiebreaker because sections are added in file order and graphlib keeps that
-    stable among ready nodes."""
-    sorter: TopologicalSorter[str] = TopologicalSorter()
-    for section, data in config.items():
-        sorter.add(section, *data.get("depends_on", []))
-    try:
-        return list(sorter.static_order())
-    except CycleError as exc:
-        sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
+def print_report(results: dict[str, CookResult], dry_run: bool) -> None:
+    all_rows = [row for result in results.values() for row in result.items]
+    changed_rows = [r for r in all_rows if r.changed or r.status != "ok"]
+    shown = all_rows if dry_run else changed_rows
 
-
-def run_cook(section: str, config: dict) -> int:
-    data = config[section]
-    needs_root = data.get("needs_root", False)
-    cook = resolve_cook(section)
-
-    if not needs_root and os.geteuid() == 0:
-        sys.exit(
-            f"ERROR: [{section}] is needs_root=false but chef is running as root; "
-            "refusing — its toolchain/files would land under /root. Run `just up` "
-            "as your normal user."
+    logger.info("")
+    if shown:
+        log_toon(
+            [
+                {
+                    "name": r.name,
+                    "mgr": r.manager,
+                    "installed": r.installed,
+                    "latest": r.latest,
+                    "action": r.action,
+                }
+                for r in shown
+            ],
+            note="=== Report ===",
         )
-
-    section_slice = {k: v for k, v in data.items() if k not in META_KEYS}
-    env = {**os.environ, SECTION_ENV: json.dumps(section_slice)}
-
-    if needs_root:
-        cmd = [
-            "sudo",
-            f"--preserve-env={SHARED_LOG_ENV},{SECTION_ENV}",
-            sys.executable,
-            str(cook),
-        ]
     else:
-        cmd = [sys.executable, str(cook)]
+        logger.info("=== Report: nothing changed ===")
 
-    result = subprocess.run(cmd, env=env)
-    if result.returncode in (0, SOFT_FAIL_EXIT):
-        return result.returncode
-    sys.exit(f"\n[{section}] FAILED (exit {result.returncode}). Aborting `just up`.")
+    if not dry_run:
+        unchanged = len(all_rows) - len(changed_rows)
+        if unchanged:
+            logger.info(
+                f"{unchanged} item(s) unchanged. Run with --dry-run for the full inventory."
+            )
 
 
-def main() -> None:
+def main(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Probe only; print the report without acting."
+    ),
+) -> None:
+    ensure_root()
     LOG_DIR.mkdir(exist_ok=True)
     os.environ.setdefault(
         SHARED_LOG_ENV,
         str(LOG_DIR / f"sys-conf-py-{datetime.now():%Y%m%d-%H%M%S}.log"),
     )
+    start_log_tee()
 
     with RECIPE_TOML.open("rb") as f:
         config = tomllib.load(f)
+    validate(config)
 
-    order = plan_order(config)
-    # Validate every cook exists before doing any work or prompting for sudo.
-    for section in order:
-        resolve_cook(section)
+    results = execute(config, dry_run)
+    print_report(results, dry_run)
 
-    if any(config[s].get("needs_root", False) for s in order):
-        subprocess.run(["sudo", "-v"], check=True)
-
-    soft_failed: list[str] = []
-    for section in order:
-        if run_cook(section, config) == SOFT_FAIL_EXIT:
-            soft_failed.append(section)
-
-    if soft_failed:
-        sys.stderr.write(
-            f"\n=== Soft failures in: {', '.join(soft_failed)} "
-            "(scroll back for details) ===\n"
-        )
-        sys.exit(SOFT_FAIL_EXIT)
+    hard = [r.cook for r in results.values() if r.status == "hard_fail"]
+    soft = [r.cook for r in results.values() if r.status == "soft_fail"]
+    for result in results.values():
+        if result.status == "hard_fail" and result.message:
+            logger.error(f"[{result.cook}] {result.message}")
+    if hard:
+        logger.error(f"=== Hard failures: {', '.join(hard)} — `just up` aborted ===")
+        raise typer.Exit(1)
+    if soft:
+        logger.warning(f"=== Soft failures: {', '.join(soft)} (scroll back) ===")
+        raise typer.Exit(SOFT_FAIL_EXIT)
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
