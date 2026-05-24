@@ -47,6 +47,13 @@ monitors**; snappy on the internal 1080p panel.
   did not move clients in earlier tests — the env file was the missing piece (lost to the
   colon-split crash, then to the DRM-node race, until both were fixed).
 - `VULKAN_ADAPTER` rides along in the same file; no longer needs isolating.
+- **Video-decode follow-on.** Moving the render node to NVIDIA broke browser HW video
+  decode (4K YouTube pegged a renderer at ~130% CPU) because NVIDIA exposes no native
+  VA-API driver. Fix: install `nvidia-vaapi-driver` (VA-API → NVDEC shim). No env var
+  needed — with `LIBVA_DRIVER_NAME` unset, libva derives the driver name from the render
+  node's kernel DRM driver (`nvidia`), so it loads `nvidia_drv_video.so` automatically.
+  Confirmed: Brave `about://gpu` shows Video Decode + Encode "Hardware accelerated", 4K
+  video plays with silent CPU.
 
 ## Action Log
 
@@ -66,3 +73,7 @@ monitors**; snappy on the internal 1080p panel.
   no KWin DRM errors, login clean. Brave `about://gpu`: `*ACTIVE*` flipped `0x8086`→`0x10de`,
   render node `renderD128`→`renderD129`, `GL_RENDERER` Intel Iris Xe→RTX 4070. VS Code fds:
   10× `renderD129` vs 1× `renderD128`. User reports the 4K monitors are now snappy. Done.
+- 2026-05-24: Installed `nvidia-vaapi-driver` (via new `[snap]`/`snap_cook.py` work in the
+  same `just up`) to restore HW video decode on the NVIDIA node. After reboot: Brave reports
+  Video Decode + Encode "Hardware accelerated", 4K video plays with silent CPU, whole system
+  feels snappy. Investigation closed.
