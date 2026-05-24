@@ -1,24 +1,7 @@
 #!/usr/bin/env -S uv run
-"""Orchestrator for `just up` (Phase 2).
-
-Chef runs as root and owns all idempotency/diff decisions; cooks are thin
-managers that only probe and act. This module is the thin top: re-exec as root,
-load the recipe, hand off, and report. The work is split across:
-
-- recipe_graph.py  recipe.toml -> validated DAG of Nodes (+ cook-class lookup).
-- cook_runner.py   the execution engine: diff each cook, run pre/post hooks,
-                   and schedule nodes concurrently (root in-process, user forked
-                   through become_user()).
-
-Flow:
-1. ensure_root() re-execs chef under sudo if it isn't root yet (so `just up`
-   still prompts for the password once); SUDO_USER then names the invoking user.
-2. validate() parses the recipe into nodes and checks the graph is acyclic and
-   every section resolves to a cook.
-3. execute() walks the graph, dispatching ready nodes concurrently and returning
-   each node's CookResult.
-4. print_report() shows a compact, changes-first table; `--dry-run` probes only
-   and prints the full inventory without acting.
+"""Orchestrator for `just up`: re-exec as root, parse recipe.toml into a graph
+(recipe_graph), run the cooks (cook_runner), and report. Chef owns every
+diff/idempotency decision; cooks only probe and act.
 
 Exit codes: 0 success, 75 soft fail (named in a banner), 1 hard fail (aborts).
 """
@@ -45,8 +28,8 @@ from recipe_graph import validate
 
 
 def ensure_root() -> None:
-    """Re-exec under sudo if not already root, preserving argv and the shared
-    log path. sudo sets SUDO_USER, which become_user() drops back to."""
+    """Re-exec under sudo if not root, preserving argv and the shared log path.
+    sudo sets SUDO_USER, which become_user() drops back to."""
     if os.geteuid() == 0:
         return
     os.execvp(
@@ -90,7 +73,18 @@ def main(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Probe only; print the report without acting."
     ),
+    lint: bool = typer.Option(
+        False,
+        "--lint",
+        help="Validate recipe.toml against the cook schemas and exit; no root, no changes.",
+    ),
 ) -> None:
+    if lint:
+        with RECIPE_TOML.open("rb") as f:
+            validate(tomllib.load(f))
+        logger.info(f"{RECIPE_TOML.name}: valid")
+        return
+
     ensure_root()
     LOG_DIR.mkdir(exist_ok=True)
     os.environ.setdefault(

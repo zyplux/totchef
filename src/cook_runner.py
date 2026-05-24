@@ -1,17 +1,8 @@
-"""Cook execution engine: chef owns idempotency. Given a Node and the parsed
-recipe, diff each cook and act —
-
-- VersionedCook: chef computes the install/upgrade split from list_installed vs
-  latest_available, calls sync once, then re-probes to derive per-item changes.
-- StateCook: chef compares current vs desired and, for each differing item, runs
-  pre_hook -> apply_one -> post_hook, firing hooks only when a change is taken
-  (pre_hook is a benign-skip guard; post_hook failure is a soft fail).
-
-`execute` walks the graph with graphlib.TopologicalSorter, dispatching ready
-nodes concurrently: a root node runs in-process (apt/snap serialize on the
-dpkg/snapd lock anyway); a user node runs in a forked child that drops privilege
-once via harness.become_user() and returns its CookResult over a pipe (pickle).
-Forking only from the main thread keeps loguru's locks safe.
+"""Cook execution engine: chef diffs each cook (VersionedCook by install/upgrade
+split, StateCook by current vs desired) and acts. `execute` walks the graph with
+graphlib.TopologicalSorter, running ready nodes concurrently — a root node
+in-process, a user node in a forked child that drops privilege via
+harness.become_user() and pipes its CookResult back.
 """
 
 import os
@@ -28,7 +19,7 @@ from recipe_graph import (
     build_nodes,
     load_cook_class,
     node_graph,
-    strip_meta,
+    node_slice,
 )
 
 STATUS_RANK: dict[Status, int] = {"ok": 0, "soft_fail": 1, "hard_fail": 2}
@@ -195,11 +186,8 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
 
 
 def run_cook(node: Node, config: dict, dry_run: bool) -> CookResult:
-    section_data = config[node.section]
-    if node.entry is not None:
-        section_slice = {node.entry: strip_meta(section_data[node.entry])}
-    else:
-        section_slice = strip_meta(section_data)
+    slice_ = node_slice(config, node)
+    section_slice = {node.entry: slice_} if node.entry is not None else slice_
     cook = load_cook_class(node.section)(section_slice)
     if isinstance(cook, VersionedCook):
         return run_versioned(cook, node.id, dry_run)

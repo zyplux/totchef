@@ -22,7 +22,7 @@ soft (the snap stays usable). Runs as root (chef runs root cooks in-process).
 import shutil
 import subprocess
 
-from cook_base import Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, Result, VersionedCook, debug_main
 from harness import stream_subprocess
 
 
@@ -45,10 +45,11 @@ def parse_installed_snaps() -> dict[str, str]:
 class SnapCook(VersionedCook):
     needs_root = True
     manager = "snap"
+    entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.packages: list[str] = section.get("packages", [])
+        self.packages = PackagesConfig.model_validate(section).packages
 
     def requested(self) -> list[str]:
         return self.packages

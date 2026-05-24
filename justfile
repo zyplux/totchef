@@ -10,9 +10,13 @@ _prime-sudo:
 lint:
     ruff check --fix
     ruff format
+    ./src/chef.py --lint
 
 tc: lint
     uvx pyright src
+
+test: tc
+    uv run pytest
 
 clone repo:
     #!/usr/bin/env bash

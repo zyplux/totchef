@@ -1,4 +1,4 @@
-"""StateCook for [chromium_flags] — GPU-flag injection for Chromium-family apps.
+"""StateCook for [chromium_flags.<app>] — GPU-flag injection for Chromium apps.
 
 Two delivery mechanisms, picked per app by which marker it carries:
 - `local_state`  Chromium `Local State` JSON: union brave://flags ids into
@@ -6,19 +6,19 @@ Two delivery mechanisms, picked per app by which marker it carries:
                  skips the write while the browser is running (it would race the
                  browser's own write); a skip is benign, not a failure.
 - `argv_json`    Electron argv.json: merge allowlisted flags + a synthesized
-                 enable-features built from the shared [chromium].features.
+                 enable-features built from the entry's `features`.
 
 Diffable: desired = hash of the rendered JSON, current = hash of what's on disk,
-so unchanged apps are skipped. Runs as the invoking user (needs_root = false ->
-chef forks + drops privilege); writes into $HOME, no chown.
+so unchanged apps are skipped. Runs as the invoking user, writing into $HOME.
 """
 
 import hashlib
 import json
 from pathlib import Path
 
-from apps_config import apps_with, load
-from cook_base import ItemOutcome, StateCook, debug_main
+from pydantic import model_validator
+
+from cook_base import EntrySpec, ItemOutcome, StateCook, chain_hooks, debug_main
 from harness import logger, write_if_changed
 
 
@@ -26,24 +26,39 @@ def _strip_json_comments(text: str) -> str:
     return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("//"))
 
 
+class ChromiumFlagsEntry(EntrySpec):
+    local_state: str | None = None
+    local_state_flags: list[str] = []
+    argv_json: str | None = None
+    argv: dict[str, str | bool] = {}
+    features: list[str] = []
+    process_name: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "ChromiumFlagsEntry":
+        if (self.local_state is None) == (self.argv_json is None):
+            raise ValueError("set exactly one of `local_state` or `argv_json`")
+        return self
+
+
 class ChromiumFlagsCook(StateCook):
     manager = "chromium-flags"
     user_only_reason = "it writes browser config under $HOME"
+    entry_model = ChromiumFlagsEntry
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        config = load()
-        self.chromium_features: list[str] = config.get("chromium", {}).get(
-            "features", []
-        )
-        self.apps = apps_with(config, "local_state", "argv_json")
+        self.apps = {
+            name: ChromiumFlagsEntry.model_validate(raw)
+            for name, raw in section.items()
+        }
 
     def items(self) -> list[str]:
         return list(self.apps)
 
     def _target(self, name: str) -> Path:
         app = self.apps[name]
-        return Path.home() / (app.get("local_state") or app["argv_json"])
+        return Path.home() / (app.local_state or app.argv_json or "")
 
     def _render(self, name: str) -> bytes | None:
         """Desired file bytes, or None when there's nothing to do / no base file
@@ -51,8 +66,8 @@ class ChromiumFlagsCook(StateCook):
         so desired == current and chef skips the entry."""
         app = self.apps[name]
         target = self._target(name)
-        if "local_state" in app:
-            flags = app.get("local_state_flags", [])
+        if app.local_state is not None:
+            flags = app.local_state_flags
             if not target.exists():
                 return None
             raw = target.read_bytes()
@@ -69,8 +84,8 @@ class ChromiumFlagsCook(StateCook):
             return json.dumps(data, indent=2).encode()
 
         # argv_json (Electron)
-        argv = dict(app.get("argv", {}))
-        features = self.chromium_features + app.get("features", [])
+        argv: dict[str, str | bool] = dict(app.argv)
+        features = app.features
         if features:
             argv["enable-features"] = ",".join(features)
         existing: dict = {}
@@ -103,11 +118,14 @@ class ChromiumFlagsCook(StateCook):
 
     def hooks(self, name: str) -> tuple[str | None, str | None]:
         app = self.apps[name]
-        if "local_state" in app:
-            process = app.get("process_name", name)
-            # Guard: skip the Local State write while the browser is running.
-            return (f"pgrep -x {process} >/dev/null && exit 1 || exit 0", None)
-        return (None, None)
+        # Skip the Local State write while the browser runs (it would race the
+        # browser's own write); `! pgrep` exits non-zero when found, so chef skips.
+        guard = (
+            f"! pgrep -x {app.process_name or name} >/dev/null"
+            if app.local_state is not None
+            else None
+        )
+        return (chain_hooks(guard, app.pre_hook), app.post_hook)
 
     def apply_one(self, name: str) -> ItemOutcome:
         content = self._render(name)

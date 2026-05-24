@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from cook_base import Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, Result, VersionedCook, debug_main
 from harness import log_toon, stream_subprocess
 
 TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
@@ -88,10 +88,11 @@ def build_policy_row(package: str) -> dict:
 class AptPkgCook(VersionedCook):
     needs_root = True
     manager = "apt"
+    entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.packages: list[str] = section.get("packages", [])
+        self.packages = PackagesConfig.model_validate(section).packages
         self._policy_cache: dict[str, dict] = {}
 
     def requested(self) -> list[str]:

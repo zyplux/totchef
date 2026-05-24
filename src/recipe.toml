@@ -11,13 +11,14 @@
 #   [apt_repo.<name>]  -> cooks/apt_repo_root_cook   (third-party apt repos + keys)
 #   [apt_pkg]          -> cooks/apt_pkg_root_cook    (package install via nala)
 #   [snap]             -> cooks/snap_root_cook       (snap install/refresh)
-#   [desktop]          -> cooks/desktop_cook         (.desktop Exec= overrides)
-#   [chromium_flags]   -> cooks/chromium_flags_cook  (browser GPU-flag JSON)
-#   [settings]         -> cooks/settings_cook        (JSON env-block merge)
+#   [desktop.<app>]        -> cooks/desktop_cook         (.desktop Exec= overrides)
+#   [chromium_flags.<app>] -> cooks/chromium_flags_cook  (browser GPU-flag JSON)
+#   [settings.<app>]       -> cooks/settings_cook        (JSON env-block merge)
 #
 # A section with named subtables ([url.<name>], [file.<name>], [bash.<name>],
-# [apt_repo.<name>]) expands to one graph node per entry; a section with plain
-# data ([apt_pkg]) or none ([desktop]) is a single node. Two reserved fields are
+# [apt_repo.<name>], [desktop.<app>], [chromium_flags.<app>], [settings.<app>])
+# expands to one graph node per entry; a section with plain data ([apt_pkg]) is a
+# single node. Two reserved fields are
 # read by chef per entry (falling back to the section, then the cook class) and
 # stripped before the slice reaches the cook:
 #   needs_root  bool  true -> chef runs the node in-process as root; false ->
@@ -25,10 +26,13 @@
 #                     cook's own: an always-root *_root_cook is true, every other
 #                     cook false. Granted per entry, case by case (least
 #                     privilege) — there is no blanket section default.
-#   depends_on  list  (default [])  node ids that must finish first; a name that
-#                     is only a section (e.g. "bash") fans out to all its entry
-#                     nodes, a name that is an entry ("url.rustup") pins just that
-#                     one. chef topo-sorts via graphlib.
+#   depends_on  list  (default [])  what must finish first: a node — an entry
+#                     ("url.rustup", "bash.apt_prereqs") or a single-node section
+#                     ("apt_pkg") — or a whole section ("apt_repo"), which fans
+#                     out to all its entries. Name the smallest unit that matches
+#                     the need: a section only when you depend on all of it (so
+#                     apt_pkg -> "apt_repo", but two named "bash.*" steps, not the
+#                     whole "bash"). chef topo-sorts via graphlib.
 
 # ---------------------------------------------------------------------------
 # url — vendor `curl | bash` CLIs
@@ -48,8 +52,6 @@
 #                  `server stop` returns when the API ack lands, ~700ms before
 #                  the server process actually exits — so the one-liner stops
 #                  AND polls `herdr status server` until "not running".
-
-[url]
 
 [url.bun]
 url = "https://bun.sh/install"
@@ -105,14 +107,8 @@ packages = [
 # file — install a file with exact content (file_cook). Each [file.<name>] sets
 # path + (content | source under src/files/) + optional mode/pre_hook/post_hook;
 # chef diffs by content hash and fires `post_hook` only when the file changed.
-# file_cook is privilege-agnostic, so needs_root is granted per entry: every
-# current entry writes a system path (/etc, /usr/local) so all set it, but a
-# user-scope file would omit it. depends_on is per-entry too, ranging from
-# "needed before apt" (write_if_changed, trusted_gpgd, grub) to "needs the
-# NVIDIA driver first" (egpu/nvidia, depends_on = ["apt_pkg"]).
+# needs_root and depends_on are set per entry.
 # ---------------------------------------------------------------------------
-
-[file]
 
 # The shim [bash.*] snippets pipe file writes through. Nothing depends on apt,
 # so it runs early — bash.ubuntu_pin depends_on it.
@@ -185,19 +181,11 @@ options nvidia NVreg_EnableS0ixPowerManagement=0
 post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service 2>/dev/null || true; update-initramfs -u"
 
 # ---------------------------------------------------------------------------
-# bash — apt setup expressed as idempotent shell snippets.
-#
-# These prepare the apt environment before any repo or package work, so
-# [apt_repo]/[apt_pkg] depend on them. Chef owns the run/skip decision: each
-# entry declares a read-only `check_installed` probe and the `desired` token
-# meaning "already done"; chef runs `install_or_update` only when they differ.
-# bash_cook is privilege-agnostic, so needs_root is granted per entry (every
-# current snippet writes /etc or drives apt, so all set it). Per-entry depends_on
-# is precise — only ubuntu_pin uses `write-if-changed`, so only it depends on
-# [file.write_if_changed].
+# bash — apt setup as idempotent shell snippets that prepare the apt environment
+# before any repo/package work. Each entry's read-only `check_installed` yields
+# the current token and `desired` the target; chef runs `install_or_update` only
+# when they differ. needs_root and depends_on are set per entry.
 # ---------------------------------------------------------------------------
-
-[bash]
 
 # Cross-repo safety: uprank Ubuntu main/updates/security to priority 900 (the
 # default is 500) so a third-party package colliding by name with an Ubuntu
@@ -285,11 +273,18 @@ suites = "xenial"
 
 # ---------------------------------------------------------------------------
 # apt_pkg — packages via nala (full-upgrade + install + autoremove).
-# Version pin: "name=version". Needs the bash prereqs and the repos.
+# Version pin: "name=version". depends_on the whole "apt_repo" section (it needs
+# every repo configured, and each repo already chains back to bash.apt_prereqs
+# for nala), plus the two bash steps apt_repo can't order: the archive pins
+# (before full-upgrade) and the code-insiders debconf seed (before its install).
 # ---------------------------------------------------------------------------
 
 [apt_pkg]
-depends_on = ["bash", "apt_repo"]
+depends_on = [
+    "apt_repo",
+    "bash.ubuntu_pin",
+    "bash.code_insiders_debconf",
+]
 packages = [
     "just",
     "ghostty",
@@ -334,22 +329,86 @@ packages = [
 ]
 
 # ---------------------------------------------------------------------------
-# Per-app config (apps_config.toml) split by mechanism into three user-scope
-# cooks (needs_root = false -> chef forks + drops privilege, so they write into
-# $HOME directly, no chown). All run after the packages they tune are installed.
-#
-#   [desktop]         desktop_cook        — per-user .desktop Exec= overrides
-#                                            (kbuildsycoca refresh as a post hook)
-#   [chromium_flags]  chromium_flags_cook — Chromium Local State + Electron
-#                                            argv.json GPU-flag injection
-#   [settings]        settings_cook       — merge an env block into a JSON file
+# Per-app GPU/config tuning — three user-scope cooks, one subtable per app under
+# the cook that consumes it (depends_on = ["apt_pkg"], inherited by each entry).
+# An app tuned two ways (brave: .desktop + Local State) appears under both
+# sections. The Chromium feature set is listed explicitly per entry rather than
+# shared — duplicated across entries, but each is self-contained.
+#   [desktop.<app>]        desktop_cook        — .desktop Exec= overrides
+#   [chromium_flags.<app>] chromium_flags_cook — Chromium Local State / Electron argv.json
+#   [settings.<app>]       settings_cook       — merge an env block into a JSON file
 # ---------------------------------------------------------------------------
 
 [desktop]
 depends_on = ["apt_pkg"]
+# Base Chromium VA-API features, shared by every app below; each entry unions its
+# own extras on top (lists merge, scalars override — see CLAUDE.md).
+features = [
+    "VaapiOnNvidiaGPUs",
+    "AcceleratedVideoDecodeLinuxGL",
+    "AcceleratedVideoDecodeLinuxZeroCopyGL",
+    "WaylandLinuxDrmSyncobj",
+]
+
+[desktop.brave]
+desktop = "/usr/share/applications/brave-browser.desktop"
+# brave-only: AcceleratedVideoEncoder (outbound WebRTC / MediaRecorder),
+# WebRTCPipeWireCapturer (Wayland getDisplayMedia capture).
+features = ["AcceleratedVideoEncoder", "WebRTCPipeWireCapturer"]
+# No switches: render-node-override is silently overridden by Chromium on this
+# hybrid Intel + NVIDIA (eGPU) PRIME setup.
+
+[desktop.code]
+desktop = "/usr/share/applications/code.desktop"
+
+[desktop.code_insiders]
+desktop = "/usr/share/applications/code-insiders.desktop"
 
 [chromium_flags]
 depends_on = ["apt_pkg"]
+# Base features for the argv_json (Electron) apps; brave below uses local_state
+# and ignores `features`. Each entry unions its own extras on top.
+features = [
+    "VaapiOnNvidiaGPUs",
+    "AcceleratedVideoDecodeLinuxGL",
+    "AcceleratedVideoDecodeLinuxZeroCopyGL",
+    "WaylandLinuxDrmSyncobj",
+]
+
+# brave://flags via Local State (id@option-index; @1 = Enabled). Empty for now;
+# uncomment a line to add one.
+[chromium_flags.brave]
+local_state = ".config/BraveSoftware/Brave-Browser/Local State"
+local_state_flags = [
+    # "enable-unsafe-webgpu@1",
+]
+
+# argv.json keys go through VS Code's hardcoded allowlist; anything outside it is
+# dropped. enable-features is synthesized from `features`.
+[chromium_flags.code]
+argv_json = ".vscode/argv.json"
+
+[chromium_flags.code.argv]
+"ozone-platform-hint"      = "auto"
+"enable-gpu-rasterization" = true
+"ignore-gpu-blocklist"     = true
+
+# render-node-override hangs the GPU process at startup here — Electron does not
+# silently override it the way Brave's Chromium does on this hybrid PRIME setup.
+[chromium_flags.code_insiders]
+argv_json = ".vscode-insiders/argv.json"
+
+[chromium_flags.code_insiders.argv]
+"ozone-platform-hint"      = "auto"
+"enable-gpu-rasterization" = true
+"ignore-gpu-blocklist"     = true
 
 [settings]
 depends_on = ["apt_pkg"]
+
+# Suppress claude.ai account-level MCP connectors from auto-loading into local
+# sessions. Set in settings.json's env block — narrower than ~/.bashrc, which
+# would leak the value into every child shell.
+[settings.claude_code]
+settings_json = ".claude/settings.json"
+settings_env = { ENABLE_CLAUDEAI_MCP_SERVERS = "false" }

@@ -1,42 +1,53 @@
-"""Shared contract for sys-conf-py cooks (Phase 2).
-
-Cooks are thin "managers": they know how to probe what is installed and how to
-act, but hold **no idempotency/diff logic of their own** — chef owns the diff.
-Two shapes share `CookBase`:
-
-  VersionedCook  packages with a version (apt, cargo, uv, snap, url):
-      requested()        -> names this cook manages
-      list_installed()   -> {name: installed_version}
-      latest_available() -> {name: latest_version | None}   (None = "—", best effort)
-      sync(to_install, to_upgrade) -> Result
-    Chef computes the install/upgrade split, calls sync once (the cook batches
-    as its package manager requires), then re-probes to derive per-item changes.
-
-  StateCook      desired-state resources (apt_repo, bash, file, desktop, …):
-      items()            -> resource names
-      current()          -> {name: current_state_token}
-      desired()          -> {name: desired_state_token}
-      hooks(name)        -> (pre, post) shell snippets, run by chef around apply
-      apply_one(name)    -> ItemOutcome
-    Chef compares current vs desired, and for each differing item runs
-    pre -> apply_one -> post, firing hooks only when an action is taken.
-
-`debug_main(cls)` is the standalone entry point (`python -m cooks.<cook>` from
-src/, with SYS_CONF_PY_SECTION_JSON set) — it enforces the privilege contract and
-prints the cook's probe so a single cook can be inspected in isolation. In a real
-run chef imports cooks directly; it does not spawn them.
+"""Shared contract for sys-conf-py cooks. A cook is a thin manager that probes
+and acts but holds no diff logic — chef owns the diff. Two shapes share
+`CookBase`: VersionedCook (requested/list_installed/latest_available/sync) for
+versioned packages, and StateCook (items/current/desired/hooks/apply_one) for
+desired-state resources. `debug_main` inspects one cook in isolation. The full
+contract is in CLAUDE.md.
 """
 
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import ClassVar, Literal
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict
 
 from harness import load_section, log_toon, start_log_tee
 
 Status = Literal["ok", "soft_fail", "hard_fail"]
+
+
+class EntrySpec(BaseModel):
+    """Base for every cook's recipe-entry schema. `extra='forbid'` rejects any key
+    the cook doesn't declare, so a typo'd recipe key fails the run with a clear
+    error instead of being silently ignored. A field without a default is a
+    required key; the annotation is the type contract.
+
+    `pre_hook`/`post_hook` live here so every state-cook entry accepts them: chef
+    runs `pre_hook` as a guard (non-zero skips the item) and `post_hook` after a
+    change. A cook with an intrinsic hook composes it with these (see chain_hooks)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pre_hook: str | None = None
+    post_hook: str | None = None
+
+
+def chain_hooks(*commands: str | None) -> str | None:
+    """Join the present shell commands with `&&` (all must succeed), or None when
+    there are none — lets a cook's intrinsic hook compose with a recipe-declared
+    one. For a `pre_hook` guard the `&&` is the right semantics: any non-zero link
+    short-circuits and chef skips the item."""
+    present = [command for command in commands if command]
+    return " && ".join(present) if present else None
+
+
+class PackagesConfig(EntrySpec):
+    """Schema shared by the plain package-list sections (cargo, uv, apt_pkg, snap)."""
+
+    packages: list[str] = []
 
 
 @dataclass(frozen=True)
@@ -94,6 +105,7 @@ class CookBase:
     needs_root: bool = False
     manager: str = ""
     user_only_reason: str = "it writes into the invoking user's $HOME"
+    entry_model: ClassVar[type[EntrySpec] | None] = None
 
     def __init__(self, section: dict) -> None:
         self.section = section

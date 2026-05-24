@@ -20,7 +20,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, Result, VersionedCook, debug_main
 from harness import find_binary, stream_subprocess
 
 
@@ -45,10 +45,11 @@ def parse_tool_versions(uv: Path) -> dict[str, str]:
 class UvCook(VersionedCook):
     manager = "uv"
     user_only_reason = "uv writes into ~/.local/share/uv and ~/.local/bin"
+    entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.packages: list[str] = section.get("packages", [])
+        self.packages = PackagesConfig.model_validate(section).packages
 
     def requested(self) -> list[str]:
         return self.packages

@@ -1,6 +1,5 @@
 """Shared scaffolding for sys-conf-py cooks: log teeing, streamed subprocess
-wrapping, idempotent file writes, TOON logging, binary discovery. Sudo
-elevation is owned by chef.py now, so cooks no longer self-elevate.
+wrapping, idempotent file writes, TOON logging, binary discovery.
 """
 
 import json
@@ -78,11 +77,10 @@ def get_invoking_user() -> tuple[str, int, int, Path]:
 
 
 def become_user() -> None:
-    """The one privilege-drop chokepoint (Phase 2). Chef runs as root and forks
-    a child for each user-scope cook; the child calls this before doing any
-    work. Drops gid first (root can't set gid after dropping uid), reconstructs
-    the supplementary groups, then drops uid, and repoints HOME / USER / PATH at
-    the invoking user so toolchains write into the user's $HOME, not /root."""
+    """The one privilege-drop chokepoint, called by each forked user-scope cook
+    before it works. Drops gid first (root can't set gid after dropping uid),
+    reconstructs supplementary groups, then drops uid, and repoints HOME / USER /
+    PATH at the invoking user so toolchains write into $HOME, not /root."""
     sudo_user = os.environ.get("SUDO_USER")
     if not sudo_user:
         sys.exit("ERROR: SUDO_USER not set; chef must be launched via sudo.")

@@ -5,18 +5,10 @@ under /usr/share/keyrings/<name>.gpg (outside trusted.gpg.d, modern layout) and
 a `.sources` file with `Signed-By:` pointing at that key, so each key only
 authorises its own repo. Chef compares current vs desired and only calls
 apply_one for repos that aren't fully in place — so a re-run does no key fetch.
+Fields: see recipe.toml's header.
 
-Field semantics (per [apt_repo.<name>] block):
-  key_url        required. URL of the signing key (ASCII-armored or binary).
-  uris           required. repo base URI.
-  suites         optional (default "stable"). `{release}` is interpolated.
-  components     optional (default "main").
-  architectures  optional. omit to let apt use the host dpkg arch.
-  keyring        optional. default /usr/share/keyrings/<name>.gpg.
-  source_path    optional. default /etc/apt/sources.list.d/<name>.sources.
-
-Runs as root (writes under /usr/share/keyrings and /etc/apt). Depends on the
-[bash] prerequisites (gnupg for key dearmor).
+Runs as root (writes under /usr/share/keyrings and /etc/apt); depends on
+bash.apt_prereqs (gnupg for key dearmor).
 """
 
 import platform
@@ -25,8 +17,18 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import ItemOutcome, StateCook, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook, debug_main
 from harness import fetch_url, run, write_if_changed
+
+
+class AptRepoEntry(EntrySpec):
+    key_url: str
+    uris: str
+    suites: str = "stable"
+    components: str = "main"
+    architectures: str | None = None
+    keyring: str | None = None
+    source_path: str | None = None
 
 
 def detect_release() -> str:
@@ -37,12 +39,12 @@ def detect_release() -> str:
     return release
 
 
-def keyring_path(name: str, repo: dict) -> Path:
-    return Path(repo.get("keyring", f"/usr/share/keyrings/{name}.gpg"))
+def keyring_path(name: str, repo: AptRepoEntry) -> Path:
+    return Path(repo.keyring or f"/usr/share/keyrings/{name}.gpg")
 
 
-def source_path(name: str, repo: dict) -> Path:
-    return Path(repo.get("source_path", f"/etc/apt/sources.list.d/{name}.sources"))
+def source_path(name: str, repo: AptRepoEntry) -> Path:
+    return Path(repo.source_path or f"/etc/apt/sources.list.d/{name}.sources")
 
 
 def install_repo_key(name: str, key_url: str, keyring: Path) -> bool:
@@ -54,19 +56,19 @@ def install_repo_key(name: str, key_url: str, keyring: Path) -> bool:
     return write_if_changed(keyring, data, note=f"{name} GPG key")
 
 
-def configure_repo(name: str, repo: dict, release: str) -> bool:
+def configure_repo(name: str, repo: AptRepoEntry, release: str) -> bool:
     keyring = keyring_path(name, repo)
-    changed = install_repo_key(name, repo["key_url"], keyring)
+    changed = install_repo_key(name, repo.key_url, keyring)
     lines = [
         "Types: deb",
-        f"URIs: {repo['uris']}",
-        f"Suites: {repo.get('suites', 'stable').format(release=release)}",
-        f"Components: {repo.get('components', 'main')}",
+        f"URIs: {repo.uris}",
+        f"Suites: {repo.suites.format(release=release)}",
+        f"Components: {repo.components}",
     ]
     # Omitting Architectures: lets apt use the host's dpkg arch (plus any added
     # via `dpkg --add-architecture`); only pin for repos shipping a strict subset.
-    if archs := repo.get("architectures"):
-        lines.append(f"Architectures: {archs}")
+    if repo.architectures:
+        lines.append(f"Architectures: {repo.architectures}")
     lines.append(f"Signed-By: {keyring}")
     changed |= write_if_changed(source_path(name, repo), "\n".join(lines) + "\n")
     return changed
@@ -75,10 +77,13 @@ def configure_repo(name: str, repo: dict, release: str) -> bool:
 class AptRepoCook(StateCook):
     needs_root = True
     manager = "apt-repo"
+    entry_model = AptRepoEntry
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.repos: dict[str, dict] = section
+        self.repos = {
+            name: AptRepoEntry.model_validate(raw) for name, raw in section.items()
+        }
 
     def items(self) -> list[str]:
         return list(self.repos)
@@ -94,6 +99,10 @@ class AptRepoCook(StateCook):
 
     def desired(self) -> dict[str, str]:
         return dict.fromkeys(self.repos, "configured")
+
+    def hooks(self, name: str) -> tuple[str | None, str | None]:
+        repo = self.repos[name]
+        return (repo.pre_hook, repo.post_hook)
 
     def apply_one(self, name: str) -> ItemOutcome:
         release = detect_release()

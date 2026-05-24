@@ -1,21 +1,8 @@
-"""Recipe -> scheduling graph: turn recipe.toml's parsed config into a validated
-DAG of Nodes, and resolve each section to its cook class.
-
-A section with named subtables ([url.*], [file.*], [bash.*], [apt_repo.*])
-expands to one Node per entry (`url.rustup`); a section with plain data
-([apt_pkg]) or none ([desktop]) is a single Node. `depends_on` is read per entry
-(falling back to the section default) and stripped before the slice reaches the
-cook; it resolves to node ids — a name that is itself a node id maps to itself,
-a name that is only a section fans out to all of that section's entry nodes.
-
-`needs_root` follows the same per-entry/section precedence, but its ultimate
-fallback is the **cook class** (`CookBase.needs_root`, default False; an
-always-root cook sets True and is named `<section>_root_cook.py`). So recipe.toml
-only needs `needs_root` to mark a generic cook's entry as root (e.g. file/bash
-writing under /etc); intrinsically-root cooks declare it once on the class.
-
-Chef stays ignorant of concrete cooks — `load_cook_class` hands them back only
-as the VersionedCook / StateCook interface.
+"""Recipe -> scheduling graph: turn recipe.toml into a validated DAG of Nodes and
+resolve each section to its cook class. A section with named subtables expands to
+one Node per entry; a plain-data or empty section is a single Node. `depends_on`
+and `needs_root` are read per entry (falling back to the section, then — for
+needs_root — the cook class). See recipe.toml's header for the field semantics.
 """
 
 import importlib
@@ -24,11 +11,11 @@ import sys
 from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
 
+from pydantic import ValidationError
+
 from cook_base import CookBase
 
-# Reserved per-section/entry keys chef reads, then strips before handing the
-# slice to the cook. `needs_root` may appear in recipe.toml to override a generic
-# cook's class default; `depends_on` carries ordering.
+# Keys chef reads off a slice, then strips before handing it to the cook.
 META_KEYS = ("needs_root", "depends_on")
 
 
@@ -36,12 +23,32 @@ def strip_meta(slice_: dict) -> dict:
     return {k: v for k, v in slice_.items() if k not in META_KEYS}
 
 
+def merge_section_defaults(section_data: dict, entry: str) -> dict:
+    """Fold a subtable section's own (non-meta, scalar) keys into one entry's slice
+    as defaults: lists union (section defaults the entry extends), everything else
+    overrides (entry wins). Lets a shared list like `features` live once at the
+    section header instead of being repeated in every entry."""
+    defaults = {
+        k: v
+        for k, v in section_data.items()
+        if k not in META_KEYS and not isinstance(v, dict)
+    }
+    entry_data = strip_meta(section_data[entry])
+    merged = {**defaults, **entry_data}
+    for key, shared in defaults.items():
+        if not isinstance(shared, list):
+            continue
+        extra = entry_data.get(key)
+        if isinstance(extra, list):
+            merged[key] = list(dict.fromkeys([*shared, *extra]))
+        elif key not in entry_data:
+            merged[key] = list(shared)
+    return merged
+
+
 def load_cook_class(section: str) -> type[CookBase]:
-    """Resolve a section to its cook class generically: a section maps to
-    `cooks/<section>_root_cook.py` (always-root) or `cooks/<section>_cook.py`
-    (generic), whichever exists, and chef returns the single CookBase subclass
-    defined there — seeing it only through the VersionedCook / StateCook
-    interface, never the concrete type."""
+    """Import cooks/<section>_root_cook.py (always-root) or <section>_cook.py
+    (generic), whichever exists, and return its single CookBase subclass."""
     candidates = [
         f"cooks.{section}{suffix}"
         for suffix in ("_root_cook", "_cook")
@@ -75,11 +82,8 @@ def load_cook_class(section: str) -> type[CookBase]:
 
 @dataclass(frozen=True)
 class Node:
-    """One unit of work chef schedules. A section with named subtables expands
-    to one node per entry (`url.rustup`, `file.write_if_changed`); a section with
-    plain data (or none) is a single node (`apt_pkg`, `desktop`). `needs_root`
-    resolves from the entry, then the section, then the cook class default;
-    `depends_on` from the entry, falling back to the section."""
+    """One unit of work chef schedules — one entry of a subtable section, or a
+    whole plain-data/empty section."""
 
     id: str
     section: str
@@ -112,25 +116,59 @@ def build_nodes(config: dict) -> dict[str, Node]:
 
 
 def node_graph(nodes: dict[str, Node]) -> dict[str, set[str]]:
-    """Resolve each node's `depends_on` to node ids: a name that is a node id
-    (`url.rustup`, `apt_pkg`) maps to itself; a name that is only a section
-    (`bash`) fans out to all of that section's entry nodes."""
-    sections = {node.section for node in nodes.values()}
+    """Resolve each node's `depends_on` to node ids. A dependency names either a
+    node directly — an entry (`url.rustup`, `bash.apt_prereqs`) or a single-node
+    section (`apt_pkg`) — or a whole section (`apt_repo`), which fans out to every
+    node in that section. Name the smallest unit that matches the real need: a
+    section only when you depend on all of it (`apt_pkg` needs every repo),
+    individual entries when you need some (two of the `bash` steps, not all)."""
+    section_nodes: dict[str, set[str]] = {}
+    for node_id, node in nodes.items():
+        section_nodes.setdefault(node.section, set()).add(node_id)
+
     graph: dict[str, set[str]] = {}
     for node_id, node in nodes.items():
         deps: set[str] = set()
         for dep in node.depends_on:
             if dep in nodes:
                 deps.add(dep)
-            elif dep in sections:
-                deps.update(nid for nid, n in nodes.items() if n.section == dep)
+            elif dep in section_nodes:
+                deps.update(section_nodes[dep])
             else:
                 sys.exit(
-                    f"ERROR: [{node_id}] depends_on unknown section/entry '{dep}'."
+                    f"ERROR: [{node_id}] depends_on '{dep}', which is neither a "
+                    "node nor a section. Name an entry (e.g. 'bash.apt_prereqs'), "
+                    "a single-node section (e.g. 'apt_pkg'), or a whole section to "
+                    "fan out to all its entries (e.g. 'apt_repo')."
                 )
         deps.discard(node_id)
         graph[node_id] = deps
     return graph
+
+
+def node_slice(config: dict, node: "Node") -> dict:
+    """The exact dict a node's cook receives: an entry node gets its merged slice
+    (section defaults folded in), a single-node section gets the section itself."""
+    if node.entry is not None:
+        return merge_section_defaults(config[node.section], node.entry)
+    return strip_meta(config[node.section])
+
+
+def check_schema(config: dict, nodes: dict[str, "Node"]) -> list[str]:
+    """Validate each node's slice against its cook's `entry_model`, collecting every
+    Pydantic error as a readable `[node] loc: message` line (empty list == valid)."""
+    problems: list[str] = []
+    for node_id, node in nodes.items():
+        model = load_cook_class(node.section).entry_model
+        if model is None:
+            continue
+        try:
+            model.model_validate(node_slice(config, node))
+        except ValidationError as exc:
+            for err in exc.errors():
+                loc = ".".join(str(part) for part in err["loc"]) or "(entry)"
+                problems.append(f"  [{node_id}] {loc}: {err['msg']}")
+    return problems
 
 
 def validate(config: dict) -> None:
@@ -141,3 +179,5 @@ def validate(config: dict) -> None:
         list(TopologicalSorter(node_graph(nodes)).static_order())
     except CycleError as exc:
         sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
+    if problems := check_schema(config, nodes):
+        sys.exit("ERROR: recipe.toml schema validation failed:\n" + "\n".join(problems))
