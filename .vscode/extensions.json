@@ -2,7 +2,6 @@
   "recommendations": [
     "github.vscode-github-actions",
     "github.vscode-pull-request-github",
-    "skellock.just"
+    "nefrob.vscode-just-syntax"
   ]
 }
-
