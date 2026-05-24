@@ -121,9 +121,9 @@ def stream_subprocess(
                 logger.info(f"{prefix}{segment}")
     if writer is not None:
         writer.join()
-    rc = proc.wait()
-    if check and rc != 0:
-        raise subprocess.CalledProcessError(rc, cmd)
+    exit_code = proc.wait()
+    if check and exit_code != 0:
+        raise subprocess.CalledProcessError(exit_code, cmd)
 
 
 def write_if_changed(

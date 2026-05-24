@@ -33,8 +33,8 @@ def worst(statuses: list[Status]) -> Status:
     return max(statuses, key=lambda s: STATUS_RANK[s])
 
 
-def fmt_latest(value: str | None) -> str:
-    return value if value else "—"
+def format_latest(version: str | None) -> str:
+    return version if version else "—"
 
 
 CONTENT_DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -91,7 +91,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
                     name,
                     cook.manager,
                     installed or "(none)",
-                    fmt_latest(available),
+                    format_latest(available),
                     action,
                     changed,
                 )
@@ -128,7 +128,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
                 name,
                 cook.manager,
                 before or "(none)",
-                fmt_latest(latest.get(name)),
+                format_latest(latest.get(name)),
                 action,
                 changed,
             )

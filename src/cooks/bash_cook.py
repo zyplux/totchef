@@ -40,29 +40,29 @@ class BashCook(StateCook):
 
     def current(self) -> dict[str, str]:
         out: dict[str, str] = {}
-        for name, block in self.entries.items():
-            if not block.check_installed:
+        for name, entry in self.entries.items():
+            if not entry.check_installed:
                 out[name] = "(no check)"
                 continue
             completed = subprocess.run(
-                ["bash", "-c", block.check_installed], capture_output=True, text=True
+                ["bash", "-c", entry.check_installed], capture_output=True, text=True
             )
             out[name] = completed.stdout.strip() or "(empty)"
         return out
 
     def desired(self) -> dict[str, str]:
-        return {name: block.desired for name, block in self.entries.items()}
+        return {name: entry.desired for name, entry in self.entries.items()}
 
     def hooks(self, name: str) -> tuple[str | None, str | None]:
-        block = self.entries[name]
-        return (block.pre_hook, block.post_hook)
+        entry = self.entries[name]
+        return (entry.pre_hook, entry.post_hook)
 
     def apply_one(self, name: str) -> ItemOutcome:
-        block = self.entries[name]
+        entry = self.entries[name]
         tag = f"[{name}]"
         try:
             stream_subprocess(
-                ["bash", "-c", block.install_or_update],
+                ["bash", "-c", entry.install_or_update],
                 tag,
                 note="install_or_update",
             )

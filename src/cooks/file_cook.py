@@ -49,10 +49,10 @@ class FileCook(StateCook):
         }
 
     def _content(self, name: str) -> bytes:
-        block = self.entries[name]
-        if block.source is not None:
-            return (FILES_DIR / block.source).read_bytes()
-        return (block.content or "").encode()
+        entry = self.entries[name]
+        if entry.source is not None:
+            return (FILES_DIR / entry.source).read_bytes()
+        return (entry.content or "").encode()
 
     def _path(self, name: str) -> Path:
         return Path(self.entries[name].path)
@@ -74,8 +74,8 @@ class FileCook(StateCook):
         return {name: _digest(self._content(name)) for name in self.entries}
 
     def hooks(self, name: str) -> tuple[str | None, str | None]:
-        block = self.entries[name]
-        return (block.pre_hook, block.post_hook)
+        entry = self.entries[name]
+        return (entry.pre_hook, entry.post_hook)
 
     def apply_one(self, name: str) -> ItemOutcome:
         changed = write_if_changed(

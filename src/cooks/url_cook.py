@@ -33,16 +33,16 @@ def run_installer(url: str, args: list[str], tag: str, note: str) -> None:
     stream_subprocess(["bash", "-s", "--", *args], tag, note=note, stdin=fetch_url(url))
 
 
-def update_existing(block: UrlEntry, bin_path: Path, tag: str) -> None:
-    action = block.update_action
+def update_existing(entry: UrlEntry, bin_path: Path, tag: str) -> None:
+    action = entry.update_action
     if action is None:
         logger.info(f"{tag} No update_action; leaving {bin_path} as-is")
         return
-    if guard := block.update_guard:
+    if guard := entry.update_guard:
         shell = f"PATH={shlex.quote(str(bin_path.parent))}:$PATH; {guard}"
         stream_subprocess(["bash", "-c", shell], tag, note=f"Update guard: {guard}")
     if action == RERUN_INSTALLER:
-        run_installer(block.url, block.args, tag, note=f"Updating from {block.url}")
+        run_installer(entry.url, entry.args, tag, note=f"Updating from {entry.url}")
     elif isinstance(action, list) and action:
         stream_subprocess(
             [str(bin_path), *action],
@@ -73,8 +73,8 @@ class UrlCook(VersionedCook):
     def list_installed(self) -> dict[str, str]:
         return {
             name: "present"
-            for name, block in self.installs.items()
-            if find_binary(block.bin or name)
+            for name, entry in self.installs.items()
+            if find_binary(entry.bin or name)
         }
 
     def latest_available(self, names: list[str]) -> dict[str, str | None]:
@@ -84,14 +84,14 @@ class UrlCook(VersionedCook):
         if not (to_install or to_upgrade):
             return Result("ok")
 
-        [(name, block)] = self.installs.items()
+        [(name, entry)] = self.installs.items()
         tag = f"[{name}]"
-        bin_name = block.bin or name
+        bin_name = entry.bin or name
 
         if (existing := find_binary(bin_name)) is None:
             try:
                 run_installer(
-                    block.url, block.args, tag, note=f"Installing {block.url}"
+                    entry.url, entry.args, tag, note=f"Installing {entry.url}"
                 )
             except Exception as exc:
                 return Result("hard_fail", f"{name} install failed: {exc}")
@@ -102,7 +102,7 @@ class UrlCook(VersionedCook):
             return Result("ok")
 
         try:
-            update_existing(block, existing, tag)
+            update_existing(entry, existing, tag)
         except subprocess.CalledProcessError as exc:
             return Result("soft_fail", f"{name} update failed (still installed): {exc}")
         return Result("ok")
