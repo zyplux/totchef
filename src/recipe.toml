@@ -7,6 +7,7 @@
 #   [bash.<name>]      -> bash_cook.py      (generic idempotent shell snippets)
 #   [apt_repo.<name>]  -> apt_repo_cook.py  (third-party apt repos + keys)
 #   [apt_pkg]          -> apt_pkg_cook.py   (package install/upgrade via nala)
+#   [snap]             -> snap_cook.py      (snap install/refresh via snapd)
 #   [configure_gpu]    -> configure_gpu.py  (egpu-prime boot service + sleep tuning)
 #   [configure_apps]   -> configure_apps.py (per-app GPU flags)
 #
@@ -221,12 +222,37 @@ packages = [
     # Mitigation: every other nvidia-driver-* pinned to Pin-Priority: -1.
     "nvidia-driver-580-open",
 
+    # VA-API -> NVDEC shim so browsers HW-decode video on the eGPU instead of
+    # the CPU (4K YouTube was pegging a renderer at ~130% after the GPU flip
+    # moved the render node to NVIDIA, which exposes no native VA-API driver).
+    # Host-side only: it lands nvidia_drv_video.so under /usr/lib for host apps
+    # (Brave at /opt); snap-confined browsers ship their own graphics stack and
+    # may not see it. Needs LIBVA_DRIVER_NAME=nvidia + NVD_BACKEND=direct at
+    # runtime (egl backend is broken on driver >=525; we run 580).
+    "nvidia-vaapi-driver",
+
     "zed",
     "brave-browser",
     "code",
     "code-insiders",
     "gh",
     "signal-desktop",
+]
+
+# ---------------------------------------------------------------------------
+# snap — browsers Ubuntu ships only as snaps (the apt firefox/chromium-browser
+# packages are transitional debs that just pull these). Installed as snaps
+# openly. VA-API via the NVIDIA shim is unreliable inside snap confinement, so
+# these may software-decode video regardless of the host nvidia-vaapi-driver.
+# Only strictly-confined snaps; classic snaps are out of scope.
+# ---------------------------------------------------------------------------
+
+[snap]
+needs_root = true
+depends_on = []
+packages = [
+    "firefox",
+    "chromium",
 ]
 
 # ---------------------------------------------------------------------------

@@ -36,13 +36,17 @@ monitors**; snappy on the internal 1080p panel.
   per boot; the by-path symlinks are stable but colon-bearing — there is no stable+colon-free
   name, so the list must be resolved at boot.
 
-## What We Suspect
+## Resolved
 
-- Root cause: clients render on Intel but display on NVIDIA 4K outputs, so KWin imports
-  each 4K buffer Intel→NVIDIA over Thunderbolt every frame — the TB link is the bottleneck.
-- Fix: flipping `boot_vga` to the eGPU makes it seat master → clients render on NVIDIA →
-  no cross-GPU import. (Unverified until reboot.)
-- `VULKAN_ADAPTER` helps move Electron specifically — low confidence; reinforcement only.
+- **Fixed.** With `boot_vga` flipped to the eGPU **and** `KWIN_DRM_DEVICES` listing the eGPU
+  card first, clients moved off Intel onto NVIDIA and the 4K monitors are snappy (confirmed
+  by the user). The cross-GPU buffer import over Thunderbolt was the bottleneck.
+- The real lever is **`KWIN_DRM_DEVICES`** (compositor-side), not any client flag. Chromium
+  follows the compositor's advertised `main_device`: once KWin advertised NVIDIA as primary,
+  Brave's own `--render-node-override` flipped to `renderD129` on its own. `boot_vga` alone
+  did not move clients in earlier tests — the env file was the missing piece (lost to the
+  colon-split crash, then to the DRM-node race, until both were fixed).
+- `VULKAN_ADAPTER` rides along in the same file; no longer needs isolating.
 
 ## Action Log
 
@@ -53,18 +57,12 @@ monitors**; snappy on the internal 1080p panel.
   the eGPU is present it: flips `boot_vga`, and writes `/etc/environment.d/10-egpu-primary.conf`
   resolving each `by-path` symlink to its colon-free `/dev/dri/cardN` (eGPU first), skipping
   any node that can't open; when absent it removes the file. `configure_gpu.py` no longer
-  writes the env file (static install-time file was the staleness trap). Dry-run on the docked
-  system now yields `KWIN_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1` (card0 = eGPU), both nodes
-  present — the colon-split crash is gone. Not yet reboot-tested.
-
-## Next
-
-- `just up`, reboot docked. (`boot_vga` flip is still unverified in isolation — keep a TTY
-  ready: `sudo systemctl disable --now egpu-prime.service && sudo rm -f /etc/environment.d/10-egpu-primary.conf`,
-  then reboot, recovers it.)
-- Verify clients moved off Intel:
-  `for p in $(pgrep -f /usr/share/code/code); do ls -l /proc/$p/fd; done | grep -oE 'renderD[0-9]+' | sort | uniq -c`
-- Confirm `cat /sys/bus/pci/devices/0000:04:00.0/boot_vga` = `1` and typing on a 4K screen
-  is snappy.
-- If VS Code still on Intel: investigate Vulkan device selection (`MESA_VK_DEVICE_SELECT`);
-  `--ozone-platform=x11` only as a last resort (loses native Wayland).
+  writes the env file (static install-time file was the staleness trap). Also added
+  `wait_for_nvidia_drm_node()` — the eGPU appears on the PCI bus seconds before nvidia-drm
+  finishes and the `/dev/dri` node + by-path symlink exist, so the first reboot wrote nothing
+  (lost race); the wait closes it.
+- 2026-05-24: **Reboot confirmed the fix.** Journal: `boot_vga: 0000:04:00.0 -> 1`,
+  `wrote …10-egpu-primary.conf: KWIN_DRM_DEVICES=/dev/dri/card0:/dev/dri/card1 | VULKAN_ADAPTER=10de:2786`,
+  no KWin DRM errors, login clean. Brave `about://gpu`: `*ACTIVE*` flipped `0x8086`→`0x10de`,
+  render node `renderD128`→`renderD129`, `GL_RENDERER` Intel Iris Xe→RTX 4070. VS Code fds:
+  10× `renderD129` vs 1× `renderD128`. User reports the 4K monitors are now snappy. Done.
