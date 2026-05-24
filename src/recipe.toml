@@ -192,6 +192,10 @@ uris = "https://brave-browser-apt-release.s3.brave.com"
 key_url = "https://packages.microsoft.com/keys/microsoft.asc"
 uris = "https://packages.microsoft.com/repos/code"
 
+[apt_repo.github-cli]
+key_url = "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+uris = "https://cli.github.com/packages"
+
 [apt_repo.signal-desktop]
 key_url = "https://updates.signal.org/desktop/apt/keys.asc"
 uris = "https://updates.signal.org/desktop/apt"
@@ -219,7 +223,9 @@ packages = [
 
     "zed",
     "brave-browser",
+    "code",
     "code-insiders",
+    "gh",
     "signal-desktop",
 ]
 
