@@ -14,7 +14,8 @@ from typing import ClassVar, Literal
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
-from harness import load_section, log_toon, start_log_tee
+from harness import load_section
+from logs import log_toon, start_logging
 
 Status = Literal["ok", "soft_fail", "hard_fail"]
 
@@ -170,7 +171,7 @@ def debug_main(cls: type[CookBase]) -> None:
     installed/current state as a TOON table. Does not act."""
     section = load_section()
     _enforce_privilege(cls)
-    start_log_tee()
+    start_logging()
     cook = cls(section)
 
     if isinstance(cook, VersionedCook):

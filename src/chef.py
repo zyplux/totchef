@@ -16,15 +16,10 @@ from loguru import logger
 
 from cook_base import CookResult
 from cook_runner import execute
-from harness import (
-    LOG_DIR,
-    RECIPE_TOML,
-    SHARED_LOG_ENV,
-    SOFT_FAIL_EXIT,
-    log_toon,
-    start_log_tee,
-)
+from harness import RECIPE_TOML, SOFT_FAIL_EXIT
+from logs import LOG_DIR, SHARED_LOG_ENV, drain_logs, start_logging
 from recipe_graph import validate
+from terminal import show_table
 
 
 def ensure_root() -> None:
@@ -45,7 +40,7 @@ def print_report(results: dict[str, CookResult], dry_run: bool) -> None:
 
     logger.info("")
     if shown:
-        log_toon(
+        show_table(
             [
                 {
                     "name": r.name,
@@ -56,7 +51,7 @@ def print_report(results: dict[str, CookResult], dry_run: bool) -> None:
                 }
                 for r in shown
             ],
-            note="=== Report ===",
+            title="Report",
         )
     else:
         logger.info("=== Report: nothing changed ===")
@@ -91,13 +86,14 @@ def main(
         SHARED_LOG_ENV,
         str(LOG_DIR / f"sys-conf-py-{datetime.now():%Y%m%d-%H%M%S}.log"),
     )
-    start_log_tee()
+    start_logging()
 
     with RECIPE_TOML.open("rb") as f:
         config = tomllib.load(f)
     validate(config)
 
     results = execute(config, dry_run)
+    drain_logs()
     print_report(results, dry_run)
 
     hard = [r.cook for r in results.values() if r.status == "hard_fail"]
@@ -107,10 +103,13 @@ def main(
             logger.error(f"[{result.cook}] {result.message}")
     if hard:
         logger.error(f"=== Hard failures: {', '.join(hard)} — `just up` aborted ===")
+        drain_logs()
         raise typer.Exit(1)
     if soft:
         logger.warning(f"=== Soft failures: {', '.join(soft)} (scroll back) ===")
+        drain_logs()
         raise typer.Exit(SOFT_FAIL_EXIT)
+    drain_logs()
 
 
 if __name__ == "__main__":

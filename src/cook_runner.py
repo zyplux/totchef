@@ -7,6 +7,7 @@ harness.become_user() and pipes its CookResult back.
 
 import os
 import pickle
+import re
 import traceback
 from graphlib import TopologicalSorter
 
@@ -21,6 +22,7 @@ from recipe_graph import (
     node_graph,
     node_slice,
 )
+from terminal import progress_region
 
 STATUS_RANK: dict[Status, int] = {"ok": 0, "soft_fail": 1, "hard_fail": 2}
 
@@ -33,6 +35,16 @@ def worst(statuses: list[Status]) -> Status:
 
 def fmt_latest(value: str | None) -> str:
     return value if value else "—"
+
+
+CONTENT_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+def state_label(token: str) -> str:
+    """Render a state cook's diff token for the report. A 64-char sha256 content
+    digest carries no human meaning, so show presence; readable state tokens
+    (absent / present / configured / set) pass through unchanged."""
+    return "present" if CONTENT_DIGEST.fullmatch(token) else token
 
 
 def run_pre_hook(snippet: str, tag: str) -> bool:
@@ -134,12 +146,18 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
     if dry_run:
         for name in items:
             will = name in to_apply
+            current_token = current.get(name, "?")
+            current_label = (
+                "stale"
+                if will and CONTENT_DIGEST.fullmatch(current_token)
+                else state_label(current_token)
+            )
             rows.append(
                 ItemReport(
                     name,
                     cook.manager,
-                    current.get(name, "?"),
-                    desired.get(name, "?"),
+                    current_label,
+                    state_label(desired.get(name, "?")),
                     "would apply" if will else "ok",
                     will,
                 )
@@ -148,7 +166,7 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
 
     statuses: list[Status] = []
     for name in items:
-        before = current.get(name, "?")
+        before = state_label(current.get(name, "?"))
         if name not in to_apply:
             rows.append(ItemReport(name, cook.manager, before, "—", "unchanged", False))
             continue
@@ -249,33 +267,37 @@ def execute(config: dict, dry_run: bool) -> dict[str, CookResult]:
     running: dict[int, tuple[str, int]] = {}
     abort = False
 
-    while sorter.is_active() and not abort:
-        for node_id in sorter.get_ready():
-            node = nodes[node_id]
-            if node.needs_root:
-                result = run_cook_guarded(node, config, dry_run)
+    with progress_region("Cooking", total=len(nodes)) as bar:
+        while sorter.is_active() and not abort:
+            for node_id in sorter.get_ready():
+                node = nodes[node_id]
+                if node.needs_root:
+                    result = run_cook_guarded(node, config, dry_run)
+                    results[node_id] = result
+                    sorter.done(node_id)
+                    bar.advance()
+                    if result.status == "hard_fail":
+                        abort = True
+                        break
+                else:
+                    pid, read_fd = fork_user_cook(node, config, dry_run)
+                    running[pid] = (node_id, read_fd)
+            if abort:
+                break
+            if running:
+                pid, exit_status = os.waitpid(-1, 0)
+                node_id, read_fd = running.pop(pid)
+                result = collect_child(read_fd, exit_status, node_id)
                 results[node_id] = result
                 sorter.done(node_id)
+                bar.advance()
                 if result.status == "hard_fail":
                     abort = True
-                    break
-            else:
-                pid, read_fd = fork_user_cook(node, config, dry_run)
-                running[pid] = (node_id, read_fd)
-        if abort:
-            break
-        if running:
+
+        while running:
             pid, exit_status = os.waitpid(-1, 0)
             node_id, read_fd = running.pop(pid)
-            result = collect_child(read_fd, exit_status, node_id)
-            results[node_id] = result
-            sorter.done(node_id)
-            if result.status == "hard_fail":
-                abort = True
-
-    while running:
-        pid, exit_status = os.waitpid(-1, 0)
-        node_id, read_fd = running.pop(pid)
-        results[node_id] = collect_child(read_fd, exit_status, node_id)
+            results[node_id] = collect_child(read_fd, exit_status, node_id)
+            bar.advance()
 
     return results

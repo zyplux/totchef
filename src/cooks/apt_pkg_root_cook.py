@@ -29,7 +29,8 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from cook_base import PackagesConfig, Result, VersionedCook, debug_main
-from harness import log_toon, stream_subprocess
+from harness import stream_subprocess
+from logs import log_toon
 
 TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
 
