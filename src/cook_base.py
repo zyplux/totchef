@@ -5,7 +5,9 @@ versioned packages, and StateCook (list_resources/get_current_state/get_desired_
 for desired-state resources. The full contract is in CLAUDE.md.
 """
 
+import hashlib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import ClassVar, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
@@ -175,3 +177,43 @@ class StateCook[EntryModel: EntrySpec](CookBase):
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         raise NotImplementedError
+
+
+class FileStateCook[EntryModel: EntrySpec](StateCook[EntryModel]):
+    """A StateCook whose diff is a content hash: current state is the sha256 of the
+    file on disk (or "absent"), desired is the sha256 of the rendered bytes (or
+    `_unrendered_label`, when there is no base file present to render against).
+    Subclasses provide `_target_path` (where the file lives) and `_render` (its
+    desired bytes, or None when there is no base to patch); they keep their own
+    `apply_resource`, since the write's mode and its user-facing messages differ
+    per cook."""
+
+    _unrendered_label = "absent"
+
+    def _target_path(self, name: str) -> Path:
+        raise NotImplementedError
+
+    def _render(self, name: str) -> bytes | None:
+        raise NotImplementedError
+
+    def get_current_state(self) -> dict[str, str]:
+        states: dict[str, str] = {}
+        for name in self.entries:
+            path = self._target_path(name)
+            states[name] = (
+                hashlib.sha256(path.read_bytes()).hexdigest()
+                if path.exists()
+                else "absent"
+            )
+        return states
+
+    def get_desired_state(self) -> dict[str, str]:
+        states: dict[str, str] = {}
+        for name in self.entries:
+            content = self._render(name)
+            states[name] = (
+                hashlib.sha256(content).hexdigest()
+                if content is not None
+                else self._unrendered_label
+            )
+        return states

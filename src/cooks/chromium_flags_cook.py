@@ -12,13 +12,12 @@ Diffable: desired = hash of the rendered JSON, current = hash of what's on disk,
 so unchanged apps are skipped. Runs as the invoking user, writing into $HOME.
 """
 
-import hashlib
 import json
 from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, StateChangeOutcome, StateCook, chain_hooks
+from cook_base import EntrySpec, FileStateCook, StateChangeOutcome, chain_hooks
 from harness import logger, write_if_changed
 
 
@@ -41,9 +40,10 @@ class ChromiumFlagsEntry(EntrySpec):
         return self
 
 
-class ChromiumFlagsCook(StateCook[ChromiumFlagsEntry]):
+class ChromiumFlagsCook(FileStateCook[ChromiumFlagsEntry]):
     manager = "chromium-flags"
     entry_model = ChromiumFlagsEntry
+    _unrendered_label = "(no base file)"
 
     def _target_path(self, name: str) -> Path:
         app = self.entries[name]
@@ -84,26 +84,6 @@ class ChromiumFlagsCook(StateCook[ChromiumFlagsEntry]):
                 existing = json.loads(stripped)
         merged = {**existing, **argv}
         return (json.dumps(merged, indent=2) + "\n").encode()
-
-    def get_current_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.entries:
-            target = self._target_path(name)
-            states[name] = (
-                hashlib.sha256(target.read_bytes()).hexdigest()
-                if target.exists()
-                else "absent"
-            )
-        return states
-
-    def get_desired_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.entries:
-            content = self._render(name)
-            states[name] = (
-                hashlib.sha256(content).hexdigest() if content else "(no base file)"
-            )
-        return states
 
     def get_hooks(self, name: str) -> tuple[str | None, str | None]:
         app = self.entries[name]

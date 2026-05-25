@@ -8,11 +8,10 @@ desired = hash of the merged JSON, current = hash on disk. Runs as the invoking
 user, writing into $HOME.
 """
 
-import hashlib
 import json
 from pathlib import Path
 
-from cook_base import EntrySpec, StateChangeOutcome, StateCook
+from cook_base import EntrySpec, FileStateCook, StateChangeOutcome
 from harness import write_if_changed
 
 
@@ -21,7 +20,7 @@ class SettingsEntry(EntrySpec):
     settings_env: dict[str, str] = {}
 
 
-class SettingsCook(StateCook[SettingsEntry]):
+class SettingsCook(FileStateCook[SettingsEntry]):
     manager = "settings"
     entry_model = SettingsEntry
 
@@ -34,23 +33,6 @@ class SettingsCook(StateCook[SettingsEntry]):
         existing: dict = json.loads(target.read_text()) if target.exists() else {}
         merged = {**existing, "env": {**existing.get("env", {}), **env_overrides}}
         return (json.dumps(merged, indent=2) + "\n").encode()
-
-    def get_current_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.entries:
-            target = self._target_path(name)
-            states[name] = (
-                hashlib.sha256(target.read_bytes()).hexdigest()
-                if target.exists()
-                else "absent"
-            )
-        return states
-
-    def get_desired_state(self) -> dict[str, str]:
-        return {
-            name: hashlib.sha256(self._render(name)).hexdigest()
-            for name in self.entries
-        }
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         changed = write_if_changed(
