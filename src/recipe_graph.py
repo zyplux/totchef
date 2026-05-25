@@ -1,17 +1,16 @@
-"""Recipe -> scheduling graph: turn recipe.toml into a validated DAG of Nodes and
-resolve each section to its cook class. A section with named subtables expands to
-one Node per entry; a plain-data or empty section is a single Node. `depends_on`
-and `needs_root` are read per entry (falling back to the section, then — for
+"""Recipe -> scheduling graph: turn recipe.toml into a DAG of Nodes and resolve
+each section to its cook class. A section with named subtables expands to one Node
+per entry; a plain-data or empty section is a single Node. `depends_on` and
+`needs_root` are read per entry (falling back to the section, then — for
 needs_root — the cook class). See recipe.toml's header for the field semantics.
+Validation of the graph (cooks exist, no cycles, schemas match) lives in
+schema_lint, which builds on this module.
 """
 
 import importlib
 import importlib.util
 import sys
 from dataclasses import dataclass
-from graphlib import CycleError, TopologicalSorter
-
-from pydantic import ValidationError
 
 from cook_base import CookBase
 
@@ -130,6 +129,12 @@ def build_node_graph(nodes: dict[str, Node]) -> dict[str, set[str]]:
     for node_id, node in nodes.items():
         deps: set[str] = set()
         for dep in node.depends_on:
+            if dep == node_id:
+                sys.exit(
+                    f"ERROR: [{node_id}] depends_on itself ('{dep}'). A node can't "
+                    "wait on its own completion — drop the self-reference. To wait "
+                    "on the rest of your section, name the section, not this node."
+                )
             if dep in nodes:
                 deps.add(dep)
             elif dep in section_nodes:
@@ -152,32 +157,3 @@ def node_slice(config: dict, node: "Node") -> dict:
     if node.entry is not None:
         return merge_section_defaults(config[node.section], node.entry)
     return strip_meta(config[node.section])
-
-
-def find_schema_problems(config: dict, nodes: dict[str, "Node"]) -> list[str]:
-    """Validate each node's slice against its cook's `entry_model`, collecting every
-    Pydantic error as a readable `[node] loc: message` line (empty list == valid)."""
-    problems: list[str] = []
-    for node_id, node in nodes.items():
-        model = load_cook_class(node.section).entry_model
-        if model is None:
-            continue
-        try:
-            model.model_validate(node_slice(config, node))
-        except ValidationError as exc:
-            for err in exc.errors():
-                loc = ".".join(str(part) for part in err["loc"]) or "(entry)"
-                problems.append(f"  [{node_id}] {loc}: {err['msg']}")
-    return problems
-
-
-def validate(config: dict) -> None:
-    nodes = build_nodes(config)
-    for section in {node.section for node in nodes.values()}:
-        load_cook_class(section)
-    try:
-        list(TopologicalSorter(build_node_graph(nodes)).static_order())
-    except CycleError as exc:
-        sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
-    if problems := find_schema_problems(config, nodes):
-        sys.exit("ERROR: recipe.toml schema validation failed:\n" + "\n".join(problems))

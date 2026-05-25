@@ -25,7 +25,9 @@
 #                     chef forks + drops to the invoking user. Default is the
 #                     cook's own: an always-root *_root_cook is true, every other
 #                     cook false. Granted per entry, case by case (least
-#                     privilege) — there is no blanket section default.
+#                     privilege) — there is no blanket section default: --lint
+#                     rejects needs_root on a subtable header (it would fold down
+#                     onto every entry). Set it on the leaf that needs it.
 #   depends_on  list  (default [])  what must finish first: a node — an entry
 #                     ("url.rustup", "bash.apt_prereqs") or a single-node section
 #                     ("apt_pkg") — or a whole section ("apt_repo"), which fans

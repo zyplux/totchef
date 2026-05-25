@@ -1,0 +1,89 @@
+"""Lint recipe.toml before chef runs it: every section resolves to a cook, the
+depends_on graph is acyclic, and each node's slice satisfies its cook's
+`entry_model`. `validate` is the `--lint` entry point and the gate chef calls
+before a real run. This layer sits on top of recipe_graph (graph construction)
+and adds no graph logic of its own.
+"""
+
+import sys
+from graphlib import CycleError, TopologicalSorter
+
+from pydantic import ValidationError
+
+from recipe_graph import (
+    Node,
+    build_node_graph,
+    build_nodes,
+    load_cook_class,
+    node_slice,
+)
+
+
+def find_schema_problems(config: dict, nodes: dict[str, Node]) -> list[str]:
+    """Validate each node's slice against its cook's `entry_model`, collecting every
+    Pydantic error as a readable `[node] loc: message` line (empty list == valid)."""
+    problems: list[str] = []
+    for node_id, node in nodes.items():
+        model = load_cook_class(node.section).entry_model
+        if model is None:
+            continue
+        try:
+            model.model_validate(node_slice(config, node))
+        except ValidationError as exc:
+            for err in exc.errors():
+                loc = ".".join(str(part) for part in err["loc"]) or "(entry)"
+                problems.append(f"  [{node_id}] {loc}: {err['msg']}")
+    return problems
+
+
+def rule_sections_resolve_to_cooks(nodes: dict[str, Node]) -> None:
+    """Every section names a cook module that imports to exactly one cook class.
+    `load_cook_class` exits with a precise message on a missing or ambiguous one."""
+    for section in {node.section for node in nodes.values()}:
+        load_cook_class(section)
+
+
+def rule_dependencies_acyclic(nodes: dict[str, Node]) -> None:
+    """The depends_on graph resolves and topo-sorts. `build_node_graph` exits on an
+    unknown or self dependency; a cycle would otherwise deadlock the schedule."""
+    try:
+        list(TopologicalSorter(build_node_graph(nodes)).static_order())
+    except CycleError as exc:
+        sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
+
+
+def rule_root_only_on_leaves(config: dict, nodes: dict[str, Node]) -> None:
+    """needs_root grants in-process root, so it must be enabled per leaf, never on a
+    subtable section header — `build_nodes` folds a header's needs_root down as the
+    default for every entry, granting root wholesale instead of case by case. A
+    plain single-node section is itself the leaf, so its needs_root is fine."""
+    sections: dict[str, list[Node]] = {}
+    for node in nodes.values():
+        sections.setdefault(node.section, []).append(node)
+    offenders = sorted(
+        section
+        for section, entries in sections.items()
+        if config[section].get("needs_root")
+        and any(entry.entry is not None for entry in entries)
+    )
+    if offenders:
+        named = ", ".join(f"[{section}]" for section in offenders)
+        sys.exit(
+            f"ERROR: needs_root enabled on subtable section header(s) {named}. "
+            "Grant root per entry (a leaf), not on a whole section — move needs_root "
+            "onto each entry that needs it (least privilege)."
+        )
+
+
+def rule_slices_match_schema(config: dict, nodes: dict[str, Node]) -> None:
+    """Each node's slice validates against its cook's `entry_model`."""
+    if problems := find_schema_problems(config, nodes):
+        sys.exit("ERROR: recipe.toml schema validation failed:\n" + "\n".join(problems))
+
+
+def validate(config: dict) -> None:
+    nodes = build_nodes(config)
+    rule_sections_resolve_to_cooks(nodes)
+    rule_root_only_on_leaves(config, nodes)
+    rule_dependencies_acyclic(nodes)
+    rule_slices_match_schema(config, nodes)

@@ -18,7 +18,7 @@ from cook_base import CookResult
 from cook_runner import run_recipe
 from harness import RECIPE_TOML, SOFT_FAIL_EXIT
 from logs import LOG_DIR, SHARED_LOG_ENV, drain_logs, start_logging
-from recipe_graph import validate
+from schema_lint import validate
 from terminal import show_table
 
 
