@@ -96,7 +96,7 @@ class AptPkgCook(VersionedCook):
         self.packages = PackagesConfig.model_validate(section).packages
         self._policy_cache: dict[str, dict] = {}
 
-    def requested(self) -> list[str]:
+    def list_requested(self) -> list[str]:
         return self.packages
 
     def _policy(self, package: str) -> dict:
@@ -119,7 +119,7 @@ class AptPkgCook(VersionedCook):
             if (row := self._policy(p))["installed"] != "(none)"
         }
 
-    def latest_available(self, names: list[str]) -> dict[str, str | None]:
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
         return {
             p: (None if (c := self._policy(p)["candidate"]) == "(none)" else c)
             for p in names

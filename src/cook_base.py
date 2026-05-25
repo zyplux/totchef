@@ -1,8 +1,8 @@
 """Shared contract for sys-conf-py cooks. A cook is a thin manager that probes
 and acts but holds no diff logic — chef owns the diff. Two shapes share
-`CookBase`: VersionedCook (requested/list_installed/latest_available/sync) for
-versioned packages, and StateCook (items/current/desired/hooks/apply_one) for
-desired-state resources. The full contract is in CLAUDE.md.
+`CookBase`: VersionedCook (list_requested/list_installed/find_latest/sync) for
+versioned packages, and StateCook (list_resources/get_current_state/get_desired_state/get_hooks/apply_resource)
+for desired-state resources. The full contract is in CLAUDE.md.
 """
 
 from dataclasses import dataclass, field
@@ -54,8 +54,8 @@ class SyncOutcome:
 
 
 @dataclass(frozen=True)
-class ItemOutcome:
-    """Outcome of a StateCook.apply_one for one resource."""
+class StateChangeOutcome:
+    """Outcome of a StateCook.apply_resource for one resource."""
 
     changed: bool
     status: Status = "ok"
@@ -63,7 +63,7 @@ class ItemOutcome:
 
 
 @dataclass(frozen=True)
-class ItemReport:
+class ReportRow:
     """One row of the end-of-run report, assembled by chef."""
 
     name: str
@@ -77,14 +77,14 @@ class ItemReport:
 
 @dataclass
 class CookResult:
-    """Everything chef needs from one cook: an aggregate status, the per-item
-    report rows, and an optional cook-level message. Travels back from forked
+    """Everything chef needs from one cook: an aggregate status, the report rows,
+    and an optional cook-level message. Travels back from forked
     user-cook children to the root parent over a pipe (so it must stay
     picklable — plain dataclasses only)."""
 
     cook: str
     status: Status
-    items: list[ItemReport] = field(default_factory=list)
+    rows: list[ReportRow] = field(default_factory=list)
     message: str = ""
 
 
@@ -103,21 +103,17 @@ class CookBase:
     def __init__(self, section: dict) -> None:
         self.section = section
 
-    @property
-    def cook_name(self) -> str:
-        return type(self).__name__
-
 
 class VersionedCook(CookBase):
     kind = "versioned"
 
-    def requested(self) -> list[str]:
+    def list_requested(self) -> list[str]:
         raise NotImplementedError
 
     def list_installed(self) -> dict[str, str]:
         raise NotImplementedError
 
-    def latest_available(self, names: list[str]) -> dict[str, str | None]:
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
         raise NotImplementedError
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
@@ -127,17 +123,17 @@ class VersionedCook(CookBase):
 class StateCook(CookBase):
     kind = "state"
 
-    def items(self) -> list[str]:
+    def list_resources(self) -> list[str]:
         raise NotImplementedError
 
-    def current(self) -> dict[str, str]:
+    def get_current_state(self) -> dict[str, str]:
         raise NotImplementedError
 
-    def desired(self) -> dict[str, str]:
+    def get_desired_state(self) -> dict[str, str]:
         raise NotImplementedError
 
-    def hooks(self, name: str) -> tuple[str | None, str | None]:
+    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
         return (None, None)
 
-    def apply_one(self, name: str) -> ItemOutcome:
+    def apply_resource(self, name: str) -> StateChangeOutcome:
         raise NotImplementedError

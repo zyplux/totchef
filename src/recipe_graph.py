@@ -154,7 +154,7 @@ def node_slice(config: dict, node: "Node") -> dict:
     return strip_meta(config[node.section])
 
 
-def check_schema(config: dict, nodes: dict[str, "Node"]) -> list[str]:
+def find_schema_problems(config: dict, nodes: dict[str, "Node"]) -> list[str]:
     """Validate each node's slice against its cook's `entry_model`, collecting every
     Pydantic error as a readable `[node] loc: message` line (empty list == valid)."""
     problems: list[str] = []
@@ -179,5 +179,5 @@ def validate(config: dict) -> None:
         list(TopologicalSorter(build_node_graph(nodes)).static_order())
     except CycleError as exc:
         sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
-    if problems := check_schema(config, nodes):
+    if problems := find_schema_problems(config, nodes):
         sys.exit("ERROR: recipe.toml schema validation failed:\n" + "\n".join(problems))

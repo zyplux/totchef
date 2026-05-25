@@ -4,7 +4,7 @@ Each repo is one resource. Its desired state is "configured": a signing key
 under /usr/share/keyrings/<name>.gpg (outside trusted.gpg.d, modern layout) and
 a `.sources` file with `Signed-By:` pointing at that key, so each key only
 authorises its own repo. Chef compares current vs desired and only calls
-apply_one for repos that aren't fully in place — so a re-run does no key fetch.
+apply_resource for repos that aren't fully in place — so a re-run does no key fetch.
 Fields: see recipe.toml's header.
 
 Runs as root (writes under /usr/share/keyrings and /etc/apt); depends on
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import EntrySpec, ItemOutcome, StateCook
+from cook_base import EntrySpec, StateChangeOutcome, StateCook
 from harness import fetch_url, run, write_if_changed
 
 
@@ -39,11 +39,11 @@ def detect_release() -> str:
     return release
 
 
-def keyring_path(name: str, repo: AptRepoEntry) -> Path:
+def build_keyring_path(name: str, repo: AptRepoEntry) -> Path:
     return Path(repo.keyring or f"/usr/share/keyrings/{name}.gpg")
 
 
-def source_path(name: str, repo: AptRepoEntry) -> Path:
+def build_source_path(name: str, repo: AptRepoEntry) -> Path:
     return Path(repo.source_path or f"/etc/apt/sources.list.d/{name}.sources")
 
 
@@ -57,7 +57,7 @@ def install_repo_key(name: str, key_url: str, keyring: Path) -> bool:
 
 
 def configure_repo(name: str, repo: AptRepoEntry, release: str) -> bool:
-    keyring = keyring_path(name, repo)
+    keyring = build_keyring_path(name, repo)
     changed = install_repo_key(name, repo.key_url, keyring)
     lines = [
         "Types: deb",
@@ -70,7 +70,7 @@ def configure_repo(name: str, repo: AptRepoEntry, release: str) -> bool:
     if repo.architectures:
         lines.append(f"Architectures: {repo.architectures}")
     lines.append(f"Signed-By: {keyring}")
-    changed |= write_if_changed(source_path(name, repo), "\n".join(lines) + "\n")
+    changed |= write_if_changed(build_source_path(name, repo), "\n".join(lines) + "\n")
     return changed
 
 
@@ -85,27 +85,28 @@ class AptRepoCook(StateCook):
             name: AptRepoEntry.model_validate(raw) for name, raw in section.items()
         }
 
-    def items(self) -> list[str]:
+    def list_resources(self) -> list[str]:
         return list(self.repos)
 
-    def current(self) -> dict[str, str]:
+    def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name, repo in self.repos.items():
             present = (
-                keyring_path(name, repo).exists() and source_path(name, repo).exists()
+                build_keyring_path(name, repo).exists()
+                and build_source_path(name, repo).exists()
             )
             states[name] = "configured" if present else "absent"
         return states
 
-    def desired(self) -> dict[str, str]:
+    def get_desired_state(self) -> dict[str, str]:
         return dict.fromkeys(self.repos, "configured")
 
-    def hooks(self, name: str) -> tuple[str | None, str | None]:
+    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
         repo = self.repos[name]
         return (repo.pre_hook, repo.post_hook)
 
-    def apply_one(self, name: str) -> ItemOutcome:
+    def apply_resource(self, name: str) -> StateChangeOutcome:
         release = detect_release()
         logger.info(f"Configuring repo {name} (release codename: {release})")
         changed = configure_repo(name, self.repos[name], release)
-        return ItemOutcome(changed=changed)
+        return StateChangeOutcome(changed=changed)

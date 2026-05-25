@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, chain_hooks
+from cook_base import EntrySpec, StateChangeOutcome, StateCook, chain_hooks
 from harness import logger, write_if_changed
 
 
@@ -52,7 +52,7 @@ class ChromiumFlagsCook(StateCook):
             for name, raw in section.items()
         }
 
-    def items(self) -> list[str]:
+    def list_resources(self) -> list[str]:
         return list(self.apps)
 
     def _target(self, name: str) -> Path:
@@ -95,7 +95,7 @@ class ChromiumFlagsCook(StateCook):
         merged = {**existing, **argv}
         return (json.dumps(merged, indent=2) + "\n").encode()
 
-    def current(self) -> dict[str, str]:
+    def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name in self.apps:
             target = self._target(name)
@@ -106,7 +106,7 @@ class ChromiumFlagsCook(StateCook):
             )
         return states
 
-    def desired(self) -> dict[str, str]:
+    def get_desired_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name in self.apps:
             content = self._render(name)
@@ -115,7 +115,7 @@ class ChromiumFlagsCook(StateCook):
             )
         return states
 
-    def hooks(self, name: str) -> tuple[str | None, str | None]:
+    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
         app = self.apps[name]
         # Skip the Local State write while the browser runs (it would race the
         # browser's own write); `! pgrep` exits non-zero when found, so chef skips.
@@ -126,14 +126,14 @@ class ChromiumFlagsCook(StateCook):
         )
         return (chain_hooks(guard, app.pre_hook), app.post_hook)
 
-    def apply_one(self, name: str) -> ItemOutcome:
+    def apply_resource(self, name: str) -> StateChangeOutcome:
         content = self._render(name)
         if content is None:
-            return ItemOutcome(
+            return StateChangeOutcome(
                 changed=False,
                 message=f"{self._target(name)} not found; launch the app once, then re-run.",
             )
         changed = write_if_changed(self._target(name), content, note=name)
         if changed:
             logger.info(f"{name}: restart the app to apply the new flags.")
-        return ItemOutcome(changed=changed)
+        return StateChangeOutcome(changed=changed)

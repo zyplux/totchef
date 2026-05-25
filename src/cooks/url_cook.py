@@ -66,7 +66,7 @@ class UrlCook(VersionedCook):
             name: UrlEntry.model_validate(raw) for name, raw in section.items()
         }
 
-    def requested(self) -> list[str]:
+    def list_requested(self) -> list[str]:
         return list(self.installs)
 
     def list_installed(self) -> dict[str, str]:
@@ -76,7 +76,7 @@ class UrlCook(VersionedCook):
             if find_binary(entry.bin or name)
         }
 
-    def latest_available(self, names: list[str]) -> dict[str, str | None]:
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:

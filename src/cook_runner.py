@@ -13,7 +13,7 @@ from graphlib import TopologicalSorter
 
 from loguru import logger
 
-from cook_base import CookResult, ItemReport, StateCook, Status, VersionedCook
+from cook_base import CookResult, ReportRow, StateCook, Status, VersionedCook
 from harness import become_user, stream_subprocess
 from recipe_graph import (
     Node,
@@ -27,20 +27,20 @@ from terminal import progress_region
 STATUS_RANK: dict[Status, int] = {"ok": 0, "soft_fail": 1, "hard_fail": 2}
 
 
-def worst_status(statuses: list[Status]) -> Status:
+def pick_worst_status(statuses: list[Status]) -> Status:
     if not statuses:
         return "ok"
     return max(statuses, key=lambda s: STATUS_RANK[s])
 
 
-def format_latest(version: str | None) -> str:
+def format_version(version: str | None) -> str:
     return version if version else "—"
 
 
 CONTENT_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
-def state_label(token: str) -> str:
+def format_state(token: str) -> str:
     """Render a state cook's diff token for the report. A 64-char sha256 content
     digest carries no human meaning, so show presence; readable state tokens
     (absent / present / configured / set) pass through unchanged."""
@@ -69,12 +69,12 @@ def run_post_hook(snippet: str, tag: str) -> Status:
 
 
 def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResult:
-    requested = cook.requested()
+    requested = cook.list_requested()
     installed_before = cook.list_installed()
-    latest = cook.latest_available(requested)
+    latest = cook.find_latest(requested)
 
     if dry_run:
-        rows: list[ItemReport] = []
+        rows: list[ReportRow] = []
         for name in requested:
             installed = installed_before.get(name)
             available = latest.get(name)
@@ -87,11 +87,11 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
             else:
                 action, changed = "up-to-date", False
             rows.append(
-                ItemReport(
+                ReportRow(
                     name,
                     cook.manager,
                     installed or "(none)",
-                    format_latest(available),
+                    format_version(available),
                     action,
                     changed,
                 )
@@ -124,11 +124,11 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
         else:
             action, changed = "unchanged", False
         rows.append(
-            ItemReport(
+            ReportRow(
                 name,
                 cook.manager,
                 before or "(none)",
-                format_latest(latest.get(name)),
+                format_version(latest.get(name)),
                 action,
                 changed,
             )
@@ -137,27 +137,27 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
 
 
 def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
-    items = cook.items()
-    current = cook.current()
-    desired = cook.desired()
-    to_apply = [n for n in items if current.get(n) != desired.get(n)]
+    resources = cook.list_resources()
+    current = cook.get_current_state()
+    desired = cook.get_desired_state()
+    to_apply = [n for n in resources if current.get(n) != desired.get(n)]
 
-    rows: list[ItemReport] = []
+    rows: list[ReportRow] = []
     if dry_run:
-        for name in items:
+        for name in resources:
             will = name in to_apply
             current_token = current.get(name, "?")
             current_label = (
                 "stale"
                 if will and CONTENT_DIGEST.fullmatch(current_token)
-                else state_label(current_token)
+                else format_state(current_token)
             )
             rows.append(
-                ItemReport(
+                ReportRow(
                     name,
                     cook.manager,
                     current_label,
-                    state_label(desired.get(name, "?")),
+                    format_state(desired.get(name, "?")),
                     "would apply" if will else "ok",
                     will,
                 )
@@ -165,19 +165,19 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
         return CookResult(section, "ok", rows)
 
     statuses: list[Status] = []
-    for name in items:
-        before = state_label(current.get(name, "?"))
+    for name in resources:
+        before = format_state(current.get(name, "?"))
         if name not in to_apply:
-            rows.append(ItemReport(name, cook.manager, before, "—", "unchanged", False))
+            rows.append(ReportRow(name, cook.manager, before, "—", "unchanged", False))
             continue
 
         tag = f"[{section}:{name}]"
-        pre_hook, post_hook = cook.hooks(name)
+        pre_hook, post_hook = cook.get_hooks(name)
         if pre_hook and not run_pre_hook(pre_hook, tag):
-            rows.append(ItemReport(name, cook.manager, before, "—", "skipped", False))
+            rows.append(ReportRow(name, cook.manager, before, "—", "skipped", False))
             continue
 
-        outcome = cook.apply_one(name)
+        outcome = cook.apply_resource(name)
         if outcome.message:
             (logger.error if outcome.status == "hard_fail" else logger.info)(
                 f"{tag} {outcome.message}"
@@ -197,10 +197,10 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
             action = "unchanged"
         statuses.append(status)
         rows.append(
-            ItemReport(name, cook.manager, before, "—", action, outcome.changed, status)
+            ReportRow(name, cook.manager, before, "—", action, outcome.changed, status)
         )
 
-    return CookResult(section, worst_status(statuses), rows)
+    return CookResult(section, pick_worst_status(statuses), rows)
 
 
 def run_cook(node: Node, config: dict, dry_run: bool) -> CookResult:
@@ -241,7 +241,7 @@ def fork_user_cook(node: Node, config: dict, dry_run: bool) -> tuple[int, int]:
     return pid, read_fd
 
 
-def collect_child(read_fd: int, exit_status: int, node_id: str) -> CookResult:
+def read_child_result(read_fd: int, exit_status: int, node_id: str) -> CookResult:
     with os.fdopen(read_fd, "rb") as src:
         payload = src.read()
     if not payload:
@@ -287,7 +287,7 @@ def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
             if running:
                 pid, exit_status = os.waitpid(-1, 0)
                 node_id, read_fd = running.pop(pid)
-                result = collect_child(read_fd, exit_status, node_id)
+                result = read_child_result(read_fd, exit_status, node_id)
                 results[node_id] = result
                 sorter.done(node_id)
                 bar.advance()
@@ -297,7 +297,7 @@ def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
         while running:
             pid, exit_status = os.waitpid(-1, 0)
             node_id, read_fd = running.pop(pid)
-            results[node_id] = collect_child(read_fd, exit_status, node_id)
+            results[node_id] = read_child_result(read_fd, exit_status, node_id)
             bar.advance()
 
     return results

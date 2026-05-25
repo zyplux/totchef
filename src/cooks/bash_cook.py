@@ -15,7 +15,7 @@ import subprocess
 
 from loguru import logger
 
-from cook_base import EntrySpec, ItemOutcome, StateCook
+from cook_base import EntrySpec, StateChangeOutcome, StateCook
 from harness import stream_subprocess
 
 
@@ -35,10 +35,10 @@ class BashCook(StateCook):
             name: BashEntry.model_validate(raw) for name, raw in section.items()
         }
 
-    def items(self) -> list[str]:
+    def list_resources(self) -> list[str]:
         return list(self.entries)
 
-    def current(self) -> dict[str, str]:
+    def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name, entry in self.entries.items():
             if not entry.check_installed:
@@ -50,14 +50,14 @@ class BashCook(StateCook):
             states[name] = completed.stdout.strip() or "(empty)"
         return states
 
-    def desired(self) -> dict[str, str]:
+    def get_desired_state(self) -> dict[str, str]:
         return {name: entry.desired for name, entry in self.entries.items()}
 
-    def hooks(self, name: str) -> tuple[str | None, str | None]:
+    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
         entry = self.entries[name]
         return (entry.pre_hook, entry.post_hook)
 
-    def apply_one(self, name: str) -> ItemOutcome:
+    def apply_resource(self, name: str) -> StateChangeOutcome:
         entry = self.entries[name]
         tag = f"[{name}]"
         try:
@@ -67,10 +67,10 @@ class BashCook(StateCook):
                 note="install_or_update",
             )
         except subprocess.CalledProcessError as exc:
-            return ItemOutcome(
+            return StateChangeOutcome(
                 changed=False,
                 status="hard_fail",
                 message=f"{tag} install_or_update failed: {exc}",
             )
         logger.info(f"{tag} applied")
-        return ItemOutcome(changed=True)
+        return StateChangeOutcome(changed=True)

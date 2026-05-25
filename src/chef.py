@@ -34,7 +34,7 @@ def ensure_root() -> None:
 
 
 def print_report(results: dict[str, CookResult], dry_run: bool) -> None:
-    all_rows = [row for result in results.values() for row in result.items]
+    all_rows = [row for result in results.values() for row in result.rows]
     changed_rows = [r for r in all_rows if r.changed or r.status != "ok"]
     shown = all_rows if dry_run else changed_rows
 

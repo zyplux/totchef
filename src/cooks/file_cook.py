@@ -1,7 +1,7 @@
 """StateCook for [file.<name>] entries — install a file with exact content.
 
 Desired state is the hash of the intended bytes (inline `content` or a `source`
-under src/files/); current is the hash on disk. Chef calls apply_one only when
+under src/files/); current is the hash on disk. Chef calls apply_resource only when
 they differ, so a `post_hook` (daemon-reload, update-initramfs, …) fires only
 when the file changed. Fields: see recipe.toml's header.
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, ItemOutcome, StateCook
+from cook_base import EntrySpec, StateChangeOutcome, StateCook
 from harness import SRC_DIR, write_if_changed
 
 FILES_DIR = SRC_DIR / "files"
@@ -60,25 +60,25 @@ class FileCook(StateCook):
     def _mode(self, name: str) -> int:
         return int(self.entries[name].mode, 8)
 
-    def items(self) -> list[str]:
+    def list_resources(self) -> list[str]:
         return list(self.entries)
 
-    def current(self) -> dict[str, str]:
+    def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name in self.entries:
             path = self._path(name)
             states[name] = _digest(path.read_bytes()) if path.exists() else "absent"
         return states
 
-    def desired(self) -> dict[str, str]:
+    def get_desired_state(self) -> dict[str, str]:
         return {name: _digest(self._content(name)) for name in self.entries}
 
-    def hooks(self, name: str) -> tuple[str | None, str | None]:
+    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
         entry = self.entries[name]
         return (entry.pre_hook, entry.post_hook)
 
-    def apply_one(self, name: str) -> ItemOutcome:
+    def apply_resource(self, name: str) -> StateChangeOutcome:
         changed = write_if_changed(
             self._path(name), self._content(name), self._mode(name), note=name
         )
-        return ItemOutcome(changed=changed)
+        return StateChangeOutcome(changed=changed)

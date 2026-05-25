@@ -1,10 +1,10 @@
 import pytest
 
-from recipe_graph import build_nodes, check_schema
+from recipe_graph import build_nodes, find_schema_problems
 
 
 def problems_for(config: dict) -> list[str]:
-    return check_schema(config, build_nodes(config))
+    return find_schema_problems(config, build_nodes(config))
 
 
 def test_valid_minimal_recipe_has_no_problems():

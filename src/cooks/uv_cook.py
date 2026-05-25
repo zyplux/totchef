@@ -50,14 +50,14 @@ class UvCook(VersionedCook):
         super().__init__(section)
         self.packages = PackagesConfig.model_validate(section).packages
 
-    def requested(self) -> list[str]:
+    def list_requested(self) -> list[str]:
         return self.packages
 
     def list_installed(self) -> dict[str, str]:
         uv = find_binary("uv")
         return parse_tool_versions(uv) if uv else {}
 
-    def latest_available(self, names: list[str]) -> dict[str, str | None]:
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
