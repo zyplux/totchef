@@ -4,12 +4,13 @@ up:
 plan:
     ./src/chef.py --dry-run
 
-_prime-sudo:
-    sudo -v
+deadcode:
+    uvx vulture
 
-lint:
+lint: deadcode
     ruff check --fix
     ruff format
+    rumdl check --fix
     ./src/chef.py --lint
 
 tc: lint

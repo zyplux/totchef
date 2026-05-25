@@ -39,11 +39,9 @@ def nala(*args: str, note: str = "", check: bool = True) -> None:
     stream_subprocess(["nala", *args], note=note, check=check)
 
 
-def build_policy_row(package: str) -> dict:
-    """Parse `apt-cache policy <package>` into a flat row for the TOON summary."""
-    lines = subprocess.run(
-        ["apt-cache", "policy", package], capture_output=True, text=True
-    ).stdout.splitlines()
+def parse_policy(package: str, output: str) -> dict:
+    """Parse `apt-cache policy <package>` output into a flat row for the TOON summary."""
+    lines = output.splitlines()
 
     def field(name: str) -> str:
         prefix = f"{name}:"
@@ -84,6 +82,13 @@ def build_policy_row(package: str) -> dict:
         "priority": priority,
         "source": source,
     }
+
+
+def build_policy_row(package: str) -> dict:
+    output = subprocess.run(
+        ["apt-cache", "policy", package], capture_output=True, text=True
+    ).stdout
+    return parse_policy(package, output)
 
 
 class AptPkgCook(PackageListCook):

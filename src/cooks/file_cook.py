@@ -14,13 +14,13 @@ from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, FileStateCook, StateChangeOutcome
+from cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec
 from harness import SRC_DIR, write_if_changed
 
 FILES_DIR = SRC_DIR / "files"
 
 
-class FileEntry(EntrySpec):
+class FileEntry(StateEntrySpec):
     path: str
     source: str | None = None
     content: str | None = None
