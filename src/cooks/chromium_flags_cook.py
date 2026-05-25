@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, chain_hooks, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook, chain_hooks
 from harness import logger, write_if_changed
 
 
@@ -43,7 +43,6 @@ class ChromiumFlagsEntry(EntrySpec):
 
 class ChromiumFlagsCook(StateCook):
     manager = "chromium-flags"
-    user_only_reason = "it writes browser config under $HOME"
     entry_model = ChromiumFlagsEntry
 
     def __init__(self, section: dict) -> None:
@@ -97,24 +96,24 @@ class ChromiumFlagsCook(StateCook):
         return (json.dumps(merged, indent=2) + "\n").encode()
 
     def current(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name in self.apps:
             target = self._target(name)
-            out[name] = (
+            states[name] = (
                 hashlib.sha256(target.read_bytes()).hexdigest()
                 if target.exists()
                 else "absent"
             )
-        return out
+        return states
 
     def desired(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name in self.apps:
             content = self._render(name)
-            out[name] = (
+            states[name] = (
                 hashlib.sha256(content).hexdigest() if content else "(no base file)"
             )
-        return out
+        return states
 
     def hooks(self, name: str) -> tuple[str | None, str | None]:
         app = self.apps[name]
@@ -138,7 +137,3 @@ class ChromiumFlagsCook(StateCook):
         if changed:
             logger.info(f"{name}: restart the app to apply the new flags.")
         return ItemOutcome(changed=changed)
-
-
-if __name__ == "__main__":
-    debug_main(ChromiumFlagsCook)

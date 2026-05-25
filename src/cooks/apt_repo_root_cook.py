@@ -17,7 +17,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook
 from harness import fetch_url, run, write_if_changed
 
 
@@ -32,8 +32,8 @@ class AptRepoEntry(EntrySpec):
 
 
 def detect_release() -> str:
-    osr = platform.freedesktop_os_release()
-    release = osr.get("VERSION_CODENAME") or osr.get("UBUNTU_CODENAME")
+    os_release = platform.freedesktop_os_release()
+    release = os_release.get("VERSION_CODENAME") or os_release.get("UBUNTU_CODENAME")
     if not release:
         sys.exit("ERROR: could not determine release codename")
     return release
@@ -89,13 +89,13 @@ class AptRepoCook(StateCook):
         return list(self.repos)
 
     def current(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name, repo in self.repos.items():
             present = (
                 keyring_path(name, repo).exists() and source_path(name, repo).exists()
             )
-            out[name] = "configured" if present else "absent"
-        return out
+            states[name] = "configured" if present else "absent"
+        return states
 
     def desired(self) -> dict[str, str]:
         return dict.fromkeys(self.repos, "configured")
@@ -109,7 +109,3 @@ class AptRepoCook(StateCook):
         logger.info(f"Configuring repo {name} (release codename: {release})")
         changed = configure_repo(name, self.repos[name], release)
         return ItemOutcome(changed=changed)
-
-
-if __name__ == "__main__":
-    debug_main(AptRepoCook)

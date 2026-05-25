@@ -46,7 +46,7 @@ DRAIN_EVENTS: dict[str, threading.Event] = {}
 
 # terminal.py registers a sink that routes pumped lines through its rich Console
 # (so they coordinate with live regions). Kept as a hook to avoid a logs ->
-# terminal import cycle; None means write raw to TERMINAL_FD (debug_main, no rich).
+# terminal import cycle.
 LINE_SINK: Callable[[str], None] | None = None
 
 # Configured at import so pre-sudo messages get timestamped too.
@@ -68,8 +68,6 @@ def write_log(text: str) -> None:
 def _emit_terminal(line: str) -> None:
     if LINE_SINK is not None:
         LINE_SINK(line)
-    elif TERMINAL_FD is not None:
-        os.write(TERMINAL_FD, line.encode())
 
 
 def _pump(read_fd: int) -> None:

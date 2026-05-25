@@ -20,7 +20,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import PackagesConfig, Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, SyncOutcome, VersionedCook
 from harness import find_binary, stream_subprocess
 
 
@@ -44,7 +44,6 @@ def parse_tool_versions(uv: Path) -> dict[str, str]:
 
 class UvCook(VersionedCook):
     manager = "uv"
-    user_only_reason = "uv writes into ~/.local/share/uv and ~/.local/bin"
     entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
@@ -61,16 +60,16 @@ class UvCook(VersionedCook):
     def latest_available(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)
 
-    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         work = [("install", n) for n in to_install] + [
             ("upgrade", n) for n in to_upgrade
         ]
         if not work:
-            return Result("ok")
+            return SyncOutcome("ok")
 
         uv = find_binary("uv")
         if not uv:
-            return Result(
+            return SyncOutcome(
                 "hard_fail",
                 "uv must be installed first; the [url] section must run before [uv].",
             )
@@ -92,11 +91,11 @@ class UvCook(VersionedCook):
                     logger.error(f"{name} failed: {exc}")
 
         if failures:
-            return Result(
+            return SyncOutcome(
                 "hard_fail",
                 f"{len(failures)} uv tool(s) failed: " + ", ".join(failures),
             )
-        return Result("ok")
+        return SyncOutcome("ok")
 
     @staticmethod
     def _run_one(uv: Path, verb: str, name: str, tag_width: int) -> None:
@@ -104,7 +103,3 @@ class UvCook(VersionedCook):
         stream_subprocess(
             [str(uv), "tool", verb, name], f"[{name:>{tag_width}}]", note=action
         )
-
-
-if __name__ == "__main__":
-    debug_main(UvCook)

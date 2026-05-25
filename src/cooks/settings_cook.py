@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook
 from harness import write_if_changed
 
 
@@ -23,7 +23,6 @@ class SettingsEntry(EntrySpec):
 
 class SettingsCook(StateCook):
     manager = "settings"
-    user_only_reason = "it writes a JSON settings file under $HOME"
     entry_model = SettingsEntry
 
     def __init__(self, section: dict) -> None:
@@ -46,15 +45,15 @@ class SettingsCook(StateCook):
         return (json.dumps(merged, indent=2) + "\n").encode()
 
     def current(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name in self.apps:
             target = self._target(name)
-            out[name] = (
+            states[name] = (
                 hashlib.sha256(target.read_bytes()).hexdigest()
                 if target.exists()
                 else "absent"
             )
-        return out
+        return states
 
     def desired(self) -> dict[str, str]:
         return {
@@ -68,7 +67,3 @@ class SettingsCook(StateCook):
     def apply_one(self, name: str) -> ItemOutcome:
         changed = write_if_changed(self._target(name), self._render(name), note=name)
         return ItemOutcome(changed=changed)
-
-
-if __name__ == "__main__":
-    debug_main(SettingsCook)

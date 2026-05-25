@@ -22,7 +22,7 @@ soft (the snap stays usable). Runs as root (chef runs root cooks in-process).
 import shutil
 import subprocess
 
-from cook_base import PackagesConfig, Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, SyncOutcome, VersionedCook
 from harness import stream_subprocess
 
 
@@ -60,14 +60,16 @@ class SnapCook(VersionedCook):
     def latest_available(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)
 
-    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         work = [("install", n) for n in to_install] + [
             ("refresh", n) for n in to_upgrade
         ]
         if not work:
-            return Result("ok")
+            return SyncOutcome("ok")
         if shutil.which("snap") is None:
-            return Result("hard_fail", "snapd is not installed; cannot manage snaps.")
+            return SyncOutcome(
+                "hard_fail", "snapd is not installed; cannot manage snaps."
+            )
 
         tag_width = max(len(name) for _, name in work)
         install_failures: list[str] = []
@@ -85,16 +87,12 @@ class SnapCook(VersionedCook):
                 )
 
         if install_failures:
-            return Result(
+            return SyncOutcome(
                 "hard_fail", f"snap install failed: {', '.join(install_failures)}"
             )
         if refresh_failures:
-            return Result(
+            return SyncOutcome(
                 "soft_fail",
                 f"snap refresh failed (snap stays usable): {', '.join(refresh_failures)}",
             )
-        return Result("ok")
-
-
-if __name__ == "__main__":
-    debug_main(SnapCook)
+        return SyncOutcome("ok")

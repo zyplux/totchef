@@ -3,7 +3,6 @@ wrapping, idempotent file writes, binary discovery, URL fetch. Logging (the log
 pump, drain barrier, loguru config, TOON) lives in logs.py.
 """
 
-import json
 import os
 import pwd
 import shutil
@@ -19,20 +18,8 @@ SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 RECIPE_TOML = SRC_DIR / "recipe.toml"
 
-SECTION_ENV = "SYS_CONF_PY_SECTION_JSON"
-
 # sysexits.h EX_TEMPFAIL: cook -> chef.py signal for recoverable failure.
 SOFT_FAIL_EXIT = 75
-
-
-def load_section() -> dict:
-    """Read the recipe.toml slice chef.py passed us via SECTION_ENV."""
-    payload = os.environ.get(SECTION_ENV)
-    if payload is None:
-        sys.exit(
-            f"ERROR: {SECTION_ENV} not set; run via `just up`, not this cook directly."
-        )
-    return json.loads(payload)
 
 
 def get_invoking_user() -> tuple[str, int, int, Path]:

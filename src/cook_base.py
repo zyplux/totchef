@@ -2,20 +2,13 @@
 and acts but holds no diff logic — chef owns the diff. Two shapes share
 `CookBase`: VersionedCook (requested/list_installed/latest_available/sync) for
 versioned packages, and StateCook (items/current/desired/hooks/apply_one) for
-desired-state resources. `debug_main` inspects one cook in isolation. The full
-contract is in CLAUDE.md.
+desired-state resources. The full contract is in CLAUDE.md.
 """
 
-import os
-import sys
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal
 
-from loguru import logger
 from pydantic import BaseModel, ConfigDict
-
-from harness import load_section
-from logs import log_toon, start_logging
 
 Status = Literal["ok", "soft_fail", "hard_fail"]
 
@@ -52,7 +45,7 @@ class PackagesConfig(EntrySpec):
 
 
 @dataclass(frozen=True)
-class Result:
+class SyncOutcome:
     """Outcome of a VersionedCook.sync (or any cook-level act). Expected
     failures land here as a status; only bugs raise."""
 
@@ -101,11 +94,10 @@ class CookBase:
 
     `needs_root` is the cook's privilege default — False here, i.e. least
     privilege. Chef reads it as the final fallback when recipe.toml grants no
-    per-entry needs_root, and debug_main uses it to refuse the wrong euid."""
+    per-entry needs_root."""
 
     needs_root: bool = False
     manager: str = ""
-    user_only_reason: str = "it writes into the invoking user's $HOME"
     entry_model: ClassVar[type[EntrySpec] | None] = None
 
     def __init__(self, section: dict) -> None:
@@ -128,7 +120,7 @@ class VersionedCook(CookBase):
     def latest_available(self, names: list[str]) -> dict[str, str | None]:
         raise NotImplementedError
 
-    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         raise NotImplementedError
 
 
@@ -149,59 +141,3 @@ class StateCook(CookBase):
 
     def apply_one(self, name: str) -> ItemOutcome:
         raise NotImplementedError
-
-
-def _enforce_privilege(cls: type[CookBase]) -> None:
-    is_root = os.geteuid() == 0
-    if cls.needs_root and not is_root:
-        sys.exit(
-            f"ERROR: {cls.__name__} needs root but is not running as root. "
-            "Run via `just up`; chef runs as root and drops privilege per cook."
-        )
-    if not cls.needs_root and is_root:
-        sys.exit(
-            f"ERROR: {cls.__name__} must run as the invoking user, not root — "
-            f"{cls.user_only_reason} and would land under /root."
-        )
-
-
-def debug_main(cls: type[CookBase]) -> None:
-    """Standalone probe for one cook (debugging). Loads the section chef would
-    have passed via env, enforces the euid contract, and prints the cook's
-    installed/current state as a TOON table. Does not act."""
-    section = load_section()
-    _enforce_privilege(cls)
-    start_logging()
-    cook = cls(section)
-
-    if isinstance(cook, VersionedCook):
-        names = cook.requested()
-        installed = cook.list_installed()
-        latest = cook.latest_available(names)
-        rows = [
-            {
-                "name": n,
-                "installed": installed.get(n, "(none)"),
-                "latest": latest.get(n) or "—",
-            }
-            for n in names
-        ]
-    elif isinstance(cook, StateCook):
-        current = cook.current()
-        desired = cook.desired()
-        rows = [
-            {
-                "name": n,
-                "current": current.get(n, "?"),
-                "desired": desired.get(n, "?"),
-            }
-            for n in cook.items()
-        ]
-    else:
-        logger.info("Unknown cook kind; nothing to probe.")
-        return
-
-    if rows:
-        log_toon(rows, note=f"{cook.cook_name} probe:")
-    else:
-        logger.info("Nothing to probe.")

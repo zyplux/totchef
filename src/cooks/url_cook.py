@@ -15,7 +15,7 @@ from typing import Literal
 
 from loguru import logger
 
-from cook_base import EntrySpec, Result, VersionedCook, debug_main
+from cook_base import EntrySpec, SyncOutcome, VersionedCook
 from harness import fetch_url, find_binary, stream_subprocess
 
 RERUN_INSTALLER = "rerun-installer"
@@ -58,7 +58,6 @@ def update_existing(entry: UrlEntry, bin_path: Path, tag: str) -> None:
 
 class UrlCook(VersionedCook):
     manager = "curl|bash"
-    user_only_reason = "these installers write into $HOME"
     entry_model = UrlEntry
 
     def __init__(self, section: dict) -> None:
@@ -80,9 +79,9 @@ class UrlCook(VersionedCook):
     def latest_available(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)
 
-    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         if not (to_install or to_upgrade):
-            return Result("ok")
+            return SyncOutcome("ok")
 
         [(name, entry)] = self.installs.items()
         tag = f"[{name}]"
@@ -94,19 +93,17 @@ class UrlCook(VersionedCook):
                     entry.url, entry.args, tag, note=f"Installing {entry.url}"
                 )
             except Exception as exc:
-                return Result("hard_fail", f"{name} install failed: {exc}")
+                return SyncOutcome("hard_fail", f"{name} install failed: {exc}")
             if found := find_binary(bin_name):
                 logger.info(f"{tag} Installed: {found}")
             else:
                 logger.warning(f"{tag} {bin_name} not found after install")
-            return Result("ok")
+            return SyncOutcome("ok")
 
         try:
             update_existing(entry, existing, tag)
         except subprocess.CalledProcessError as exc:
-            return Result("soft_fail", f"{name} update failed (still installed): {exc}")
-        return Result("ok")
-
-
-if __name__ == "__main__":
-    debug_main(UrlCook)
+            return SyncOutcome(
+                "soft_fail", f"{name} update failed (still installed): {exc}"
+            )
+        return SyncOutcome("ok")

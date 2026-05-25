@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from cook_base import PackagesConfig, Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, SyncOutcome, VersionedCook
 from harness import stream_subprocess
 from logs import log_toon
 
@@ -125,7 +125,7 @@ class AptPkgCook(VersionedCook):
             for p in names
         }
 
-    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         nala("update", note="Refreshing apt cache")
         # `nala list --upgradable` exits 1 when nothing matches (grep convention).
         nala("list", "--upgradable", note="Upgradable packages:", check=False)
@@ -137,7 +137,7 @@ class AptPkgCook(VersionedCook):
         )
         # Fail fast before full-upgrade: priority 0 = not found in any configured repo.
         if missing := [r["package"] for r in rows if r["priority"] == 0]:
-            return Result(
+            return SyncOutcome(
                 "hard_fail",
                 f"package(s) not available in any configured repo: {', '.join(missing)}\n"
                 "  - Check release-specific naming (e.g. libva-nvidia-driver -> nvidia-vaapi-driver on Ubuntu 26.04+).\n"
@@ -159,8 +159,4 @@ class AptPkgCook(VersionedCook):
             )
         nala("autoremove", "-y", note="Removing unused packages with nala autoremove")
         logger.info(f"Done. Installed/upgraded {len(self.packages)} package(s).")
-        return Result("ok")
-
-
-if __name__ == "__main__":
-    debug_main(AptPkgCook)
+        return SyncOutcome("ok")

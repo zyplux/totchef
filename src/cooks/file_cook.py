@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook
 from harness import SRC_DIR, write_if_changed
 
 FILES_DIR = SRC_DIR / "files"
@@ -64,11 +64,11 @@ class FileCook(StateCook):
         return list(self.entries)
 
     def current(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name in self.entries:
             path = self._path(name)
-            out[name] = _digest(path.read_bytes()) if path.exists() else "absent"
-        return out
+            states[name] = _digest(path.read_bytes()) if path.exists() else "absent"
+        return states
 
     def desired(self) -> dict[str, str]:
         return {name: _digest(self._content(name)) for name in self.entries}
@@ -82,7 +82,3 @@ class FileCook(StateCook):
             self._path(name), self._content(name), self._mode(name), note=name
         )
         return ItemOutcome(changed=changed)
-
-
-if __name__ == "__main__":
-    debug_main(FileCook)

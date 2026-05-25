@@ -115,7 +115,7 @@ def build_nodes(config: dict) -> dict[str, Node]:
     return nodes
 
 
-def node_graph(nodes: dict[str, Node]) -> dict[str, set[str]]:
+def build_node_graph(nodes: dict[str, Node]) -> dict[str, set[str]]:
     """Resolve each node's `depends_on` to node ids. A dependency names either a
     node directly — an entry (`url.rustup`, `bash.apt_prereqs`) or a single-node
     section (`apt_pkg`) — or a whole section (`apt_repo`), which fans out to every
@@ -176,7 +176,7 @@ def validate(config: dict) -> None:
     for section in {node.section for node in nodes.values()}:
         load_cook_class(section)
     try:
-        list(TopologicalSorter(node_graph(nodes)).static_order())
+        list(TopologicalSorter(build_node_graph(nodes)).static_order())
     except CycleError as exc:
         sys.exit(f"ERROR: dependency cycle in recipe.toml: {' -> '.join(exc.args[1])}")
     if problems := check_schema(config, nodes):

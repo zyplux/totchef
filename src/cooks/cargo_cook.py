@@ -23,7 +23,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import PackagesConfig, Result, VersionedCook, debug_main
+from cook_base import PackagesConfig, SyncOutcome, VersionedCook
 from harness import find_binary, stream_subprocess
 
 
@@ -48,7 +48,6 @@ def parse_installed_crates() -> dict[str, str]:
 
 class CargoCook(VersionedCook):
     manager = "cargo-binstall"
-    user_only_reason = "cargo writes into ~/.cargo"
     entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
@@ -77,19 +76,19 @@ class CargoCook(VersionedCook):
         stream_subprocess([str(cargo), "install", "cargo-binstall"])
         return find_binary("cargo-binstall")
 
-    def sync(self, to_install: list[str], to_upgrade: list[str]) -> Result:
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         targets = to_install + to_upgrade
         if not targets:
-            return Result("ok")
+            return SyncOutcome("ok")
 
         if not find_binary("cargo"):
-            return Result(
+            return SyncOutcome(
                 "hard_fail",
                 "cargo not found — the [url] section (rustup) must run before [cargo].",
             )
         binstall = self._ensure_binstall()
         if not binstall:
-            return Result(
+            return SyncOutcome(
                 "hard_fail",
                 "cargo-binstall is not on PATH or in ~/.cargo/bin after bootstrap. "
                 "Check cargo's install root.",
@@ -99,8 +98,4 @@ class CargoCook(VersionedCook):
             f"Installing/upgrading {len(targets)} crate(s): " + ", ".join(targets)
         )
         stream_subprocess([str(binstall), "--no-confirm", *targets])
-        return Result("ok")
-
-
-if __name__ == "__main__":
-    debug_main(CargoCook)
+        return SyncOutcome("ok")

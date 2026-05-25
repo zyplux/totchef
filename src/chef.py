@@ -15,7 +15,7 @@ import typer
 from loguru import logger
 
 from cook_base import CookResult
-from cook_runner import execute
+from cook_runner import run_recipe
 from harness import RECIPE_TOML, SOFT_FAIL_EXIT
 from logs import LOG_DIR, SHARED_LOG_ENV, drain_logs, start_logging
 from recipe_graph import validate
@@ -92,7 +92,7 @@ def main(
         config = tomllib.load(f)
     validate(config)
 
-    results = execute(config, dry_run)
+    results = run_recipe(config, dry_run)
     drain_logs()
     print_report(results, dry_run)
 

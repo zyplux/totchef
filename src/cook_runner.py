@@ -1,5 +1,5 @@
 """Cook execution engine: chef diffs each cook (VersionedCook by install/upgrade
-split, StateCook by current vs desired) and acts. `execute` walks the graph with
+split, StateCook by current vs desired) and acts. `run_recipe` walks the graph with
 graphlib.TopologicalSorter, running ready nodes concurrently — a root node
 in-process, a user node in a forked child that drops privilege via
 harness.become_user() and pipes its CookResult back.
@@ -17,9 +17,9 @@ from cook_base import CookResult, ItemReport, StateCook, Status, VersionedCook
 from harness import become_user, stream_subprocess
 from recipe_graph import (
     Node,
+    build_node_graph,
     build_nodes,
     load_cook_class,
-    node_graph,
     node_slice,
 )
 from terminal import progress_region
@@ -27,7 +27,7 @@ from terminal import progress_region
 STATUS_RANK: dict[Status, int] = {"ok": 0, "soft_fail": 1, "hard_fail": 2}
 
 
-def worst(statuses: list[Status]) -> Status:
+def worst_status(statuses: list[Status]) -> Status:
     if not statuses:
         return "ok"
     return max(statuses, key=lambda s: STATUS_RANK[s])
@@ -200,7 +200,7 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
             ItemReport(name, cook.manager, before, "—", action, outcome.changed, status)
         )
 
-    return CookResult(section, worst(statuses), rows)
+    return CookResult(section, worst_status(statuses), rows)
 
 
 def run_cook(node: Node, config: dict, dry_run: bool) -> CookResult:
@@ -243,8 +243,8 @@ def fork_user_cook(node: Node, config: dict, dry_run: bool) -> tuple[int, int]:
 
 def collect_child(read_fd: int, exit_status: int, node_id: str) -> CookResult:
     with os.fdopen(read_fd, "rb") as src:
-        data = src.read()
-    if not data:
+        payload = src.read()
+    if not payload:
         return CookResult(
             node_id,
             "hard_fail",
@@ -252,16 +252,16 @@ def collect_child(read_fd: int, exit_status: int, node_id: str) -> CookResult:
             f"{node_id} produced no result (status {exit_status}).",
         )
     try:
-        return pickle.loads(data)
+        return pickle.loads(payload)
     except Exception as exc:
         return CookResult(
             node_id, "hard_fail", [], f"{node_id} result unreadable: {exc}"
         )
 
 
-def execute(config: dict, dry_run: bool) -> dict[str, CookResult]:
+def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
     nodes = build_nodes(config)
-    sorter: TopologicalSorter[str] = TopologicalSorter(node_graph(nodes))
+    sorter: TopologicalSorter[str] = TopologicalSorter(build_node_graph(nodes))
     sorter.prepare()
     results: dict[str, CookResult] = {}
     running: dict[int, tuple[str, int]] = {}

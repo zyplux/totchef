@@ -15,7 +15,7 @@ import subprocess
 
 from loguru import logger
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook
 from harness import stream_subprocess
 
 
@@ -39,16 +39,16 @@ class BashCook(StateCook):
         return list(self.entries)
 
     def current(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name, entry in self.entries.items():
             if not entry.check_installed:
-                out[name] = "(no check)"
+                states[name] = "(no check)"
                 continue
             completed = subprocess.run(
                 ["bash", "-c", entry.check_installed], capture_output=True, text=True
             )
-            out[name] = completed.stdout.strip() or "(empty)"
-        return out
+            states[name] = completed.stdout.strip() or "(empty)"
+        return states
 
     def desired(self) -> dict[str, str]:
         return {name: entry.desired for name, entry in self.entries.items()}
@@ -74,7 +74,3 @@ class BashCook(StateCook):
             )
         logger.info(f"{tag} applied")
         return ItemOutcome(changed=True)
-
-
-if __name__ == "__main__":
-    debug_main(BashCook)

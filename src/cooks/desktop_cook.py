@@ -12,7 +12,7 @@ invoking user, writing into $HOME; depends_on the packages it tunes.
 import hashlib
 from pathlib import Path
 
-from cook_base import EntrySpec, ItemOutcome, StateCook, chain_hooks, debug_main
+from cook_base import EntrySpec, ItemOutcome, StateCook, chain_hooks
 from harness import logger, write_if_changed
 
 # Refresh KDE's ksycoca so the launcher stops spawning apps with the stale Exec
@@ -33,27 +33,35 @@ def rewrite_exec_line(
     tokens = exec_value.split()
 
     if tokens and tokens[0] == "env":
-        i = 1
-        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
-            i += 1
-        tokens = tokens[i:]
+        cursor = 1
+        while (
+            cursor < len(tokens)
+            and "=" in tokens[cursor]
+            and not tokens[cursor].startswith("-")
+        ):
+            cursor += 1
+        tokens = tokens[cursor:]
 
     # Switches may be bare ("enable-foo") or key=value ("render-node-override=/x"); dedupe
     # by key so a value change in recipe.toml replaces the old token instead of duplicating.
-    managed_keys = {f"--{s.split('=', 1)[0]}" for s in switches}
+    managed_keys = {f"--{switch.split('=', 1)[0]}" for switch in switches}
     tokens = [
-        t
-        for t in tokens
-        if not t.startswith("--enable-features=")
-        and not any(t == k or t.startswith(k + "=") for k in managed_keys)
+        token
+        for token in tokens
+        if not token.startswith("--enable-features=")
+        and not any(token == key or token.startswith(key + "=") for key in managed_keys)
     ]
 
     insert_at = next(
-        (i for i, t in enumerate(tokens) if len(t) == 2 and t.startswith("%")),
+        (
+            index
+            for index, token in enumerate(tokens)
+            if len(token) == 2 and token.startswith("%")
+        ),
         len(tokens),
     )
-    for sw in switches:
-        tokens.insert(insert_at, f"--{sw}")
+    for switch in switches:
+        tokens.insert(insert_at, f"--{switch}")
         insert_at += 1
     if features:
         tokens.insert(insert_at, f"--enable-features={','.join(features)}")
@@ -73,7 +81,6 @@ class DesktopEntry(EntrySpec):
 
 class DesktopCook(StateCook):
     manager = "desktop"
-    user_only_reason = "it writes a per-user .desktop override under ~/.local/share"
     entry_model = DesktopEntry
 
     def __init__(self, section: dict) -> None:
@@ -108,24 +115,24 @@ class DesktopCook(StateCook):
         return ("\n".join(lines) + "\n").encode()
 
     def current(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name in self.apps:
             target = self._target(name)
-            out[name] = (
+            states[name] = (
                 hashlib.sha256(target.read_bytes()).hexdigest()
                 if target.exists()
                 else "absent"
             )
-        return out
+        return states
 
     def desired(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+        states: dict[str, str] = {}
         for name in self.apps:
             content = self._render(name)
-            out[name] = (
+            states[name] = (
                 hashlib.sha256(content).hexdigest() if content else "(no source)"
             )
-        return out
+        return states
 
     def hooks(self, name: str) -> tuple[str | None, str | None]:
         app = self.apps[name]
@@ -142,7 +149,3 @@ class DesktopCook(StateCook):
         if changed:
             logger.info("Restart the app to apply the new Exec= line.")
         return ItemOutcome(changed=changed)
-
-
-if __name__ == "__main__":
-    debug_main(DesktopCook)
