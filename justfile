@@ -1,15 +1,22 @@
 up:
     ./src/chef.py
 
+plan:
+    ./src/chef.py --dry-run
+
 _prime-sudo:
     sudo -v
 
 lint:
     ruff check --fix
     ruff format
+    ./src/chef.py --lint
 
 tc: lint
     uvx pyright src
+
+test: tc
+    uv run pytest
 
 clone repo:
     #!/usr/bin/env bash

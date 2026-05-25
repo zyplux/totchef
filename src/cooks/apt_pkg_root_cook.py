@@ -1,21 +1,25 @@
-"""Cook for the [apt_pkg] section — package install/upgrade via nala.
+"""VersionedCook for the [apt_pkg] section — package install/upgrade via nala.
 
-Drives nala (parallel downloads + `nala history undo` for rollback):
-  nala update         refresh the cache (third-party repos are already in
-                      place — the [apt_repo] cook ran first)
-  policy check        fail fast before full-upgrade if any requested package
-                      has apt-cache priority 0 (not available in any repo)
+Unlike the other versioned cooks, apt has a *cheap* latest: `apt-cache policy`
+yields both the installed and candidate version in one call, so this cook fills
+the report's "latest" column from the candidate.
+
+apt is also the one cook that ignores chef's install/upgrade split and always
+runs its full transaction, because `nala full-upgrade` is system-wide
+maintenance (it moves packages chef never asked about) and `nala install` is the
+single idempotent verb that both installs and upgrades the requested set:
+  nala update         refresh the cache (third-party repos already in place)
+  policy check        fail fast before full-upgrade if any requested package has
+                      apt-cache priority 0 (not in any configured repo)
   nala full-upgrade   bring the whole system current
   nala install        install/upgrade the requested packages
   nala autoremove     drop now-unused dependencies
+Chef still derives accurate per-package changes by re-probing installed versions
+after the transaction.
 
-Cross-repo safety, the trusted.gpg.d immutable bit, the DPkg pre/post unlock
-hook, debconf, and prerequisites are all set up upstream in [bash.*] entries;
-this cook only does the package transaction. It logs the trusted.gpg.d
-attributes after full-upgrade as a check that the hardening survived the run.
-
-Runs as root; chef spawns it under sudo. Depends on [bash] (prereqs +
-hardening + pin + debconf) and [apt_repo] (third-party repos).
+Cross-repo safety, the trusted.gpg.d immutable bit, the DPkg unlock hook,
+debconf, and prerequisites are set up upstream in [bash.*]; this cook only does
+the package transaction. Runs as root; depends on [bash] and [apt_repo].
 """
 
 import subprocess
@@ -24,8 +28,9 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from cook_base import CookBase, Result, VersionInfo, VersionStatus, main_for
-from harness import log_toon, stream_subprocess
+from cook_base import PackagesConfig, SyncOutcome, VersionedCook
+from harness import stream_subprocess
+from logs import log_toon
 
 TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
 
@@ -81,28 +86,58 @@ def build_policy_row(package: str) -> dict:
     }
 
 
-class AptPkgCook(CookBase):
+class AptPkgCook(VersionedCook):
     needs_root = True
     manager = "apt"
+    entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.packages: list[str] = section.get("packages", [])
+        self.packages = PackagesConfig.model_validate(section).packages
+        self._policy_cache: dict[str, dict] = {}
 
-    def install_or_update(self) -> Result:
+    def list_requested(self) -> list[str]:
+        return self.packages
+
+    def _policy(self, package: str) -> dict:
+        # Cache within one probe pass so list_installed + latest_available share
+        # a single apt-cache call per package.
+        if package not in self._policy_cache:
+            self._policy_cache[package] = build_policy_row(package)
+        return self._policy_cache[package]
+
+    def _fresh_policy(self, package: str) -> dict:
+        self._policy_cache.pop(package, None)
+        return self._policy(package)
+
+    def list_installed(self) -> dict[str, str]:
+        # Bust the cache so a probe after sync sees post-transaction versions.
+        self._policy_cache.clear()
+        return {
+            p: row["installed"]
+            for p in self.packages
+            if (row := self._policy(p))["installed"] != "(none)"
+        }
+
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
+        return {
+            p: (None if (c := self._policy(p)["candidate"]) == "(none)" else c)
+            for p in names
+        }
+
+    def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         nala("update", note="Refreshing apt cache")
         # `nala list --upgradable` exits 1 when nothing matches (grep convention).
         nala("list", "--upgradable", note="Upgradable packages:", check=False)
 
-        rows = [build_policy_row(p) for p in self.packages]
+        rows = [self._fresh_policy(p) for p in self.packages]
         log_toon(
             rows,
             note="Verification — installed/candidate versions and effective pin priorities:",
         )
-        # Fail fast before full-upgrade: priority 0 = package not found in any configured repo.
-        # Cheaper than letting nala discover it half a minute into the install transaction.
+        # Fail fast before full-upgrade: priority 0 = not found in any configured repo.
         if missing := [r["package"] for r in rows if r["priority"] == 0]:
-            return Result(
+            return SyncOutcome(
                 "hard_fail",
                 f"package(s) not available in any configured repo: {', '.join(missing)}\n"
                 "  - Check release-specific naming (e.g. libva-nvidia-driver -> nvidia-vaapi-driver on Ubuntu 26.04+).\n"
@@ -111,12 +146,10 @@ class AptPkgCook(CookBase):
             )
 
         nala("full-upgrade", "-y", note="Running nala full-upgrade")
-
         stream_subprocess(
             ["lsattr", "-d", str(TRUSTED_GPGD)],
             note=f"{TRUSTED_GPGD} attributes (expect 'i' set):",
         )
-
         if self.packages:
             nala(
                 "install",
@@ -124,37 +157,6 @@ class AptPkgCook(CookBase):
                 *self.packages,
                 note=f"Installing packages: {' '.join(self.packages)}",
             )
-
         nala("autoremove", "-y", note="Removing unused packages with nala autoremove")
         logger.info(f"Done. Installed/upgraded {len(self.packages)} package(s).")
-        return Result("ok", changed=True)
-
-    def show_version(self) -> list[VersionInfo]:
-        rows: list[VersionInfo] = []
-        for package in self.packages:
-            policy = build_policy_row(package)
-            installed = policy["installed"]
-            candidate = policy["candidate"]
-            status: VersionStatus
-            if installed == "(none)":
-                status = "missing"
-            elif installed != candidate:
-                status = "needs_update"
-            else:
-                status = "installed"
-            rows.append(
-                VersionInfo(
-                    name=package,
-                    installed_version=installed,
-                    available_version=candidate,
-                    source=policy["source"],
-                    status=status,
-                    cook=self.cook_name,
-                    manager=self.manager,
-                )
-            )
-        return rows
-
-
-if __name__ == "__main__":
-    main_for(AptPkgCook)
+        return SyncOutcome("ok")

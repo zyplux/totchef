@@ -1,0 +1,151 @@
+"""StateCook for [desktop.<app>] — per-user .desktop Exec= overrides.
+
+For each [desktop.<app>] entry, copies the system
+.desktop, rewrites each Exec= line with an `env` prefix + `--<switch>`es +
+`--enable-features=`, and writes the override under
+~/.local/share/applications/. Diffable: desired = hash of the rendered override,
+current = hash of what's on disk, so chef skips unchanged apps and fires the
+KDE-cache refresh `post_hook` only when a .desktop actually changed. Runs as the
+invoking user, writing into $HOME; depends_on the packages it tunes.
+"""
+
+import hashlib
+from pathlib import Path
+
+from cook_base import EntrySpec, StateChangeOutcome, StateCook, chain_hooks
+from harness import logger, write_if_changed
+
+# Refresh KDE's ksycoca so the launcher stops spawning apps with the stale Exec
+# line; tolerant of non-KDE systems where kbuildsycoca6 is absent.
+KSYCOCA_REFRESH = (
+    "command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 --noincremental || true"
+)
+
+
+def rewrite_exec_line(
+    exec_value: str,
+    env: dict[str, str],
+    features: list[str],
+    switches: list[str],
+) -> str:
+    """Idempotent rewrite of a .desktop Exec= value with env prefix, --<switch>s, and
+    --enable-features. New args insert before trailing field codes (%U, %u, %F, %f)."""
+    tokens = exec_value.split()
+
+    if tokens and tokens[0] == "env":
+        cursor = 1
+        while (
+            cursor < len(tokens)
+            and "=" in tokens[cursor]
+            and not tokens[cursor].startswith("-")
+        ):
+            cursor += 1
+        tokens = tokens[cursor:]
+
+    # Switches may be bare ("enable-foo") or key=value ("render-node-override=/x"); dedupe
+    # by key so a value change in recipe.toml replaces the old token instead of duplicating.
+    managed_keys = {f"--{switch.split('=', 1)[0]}" for switch in switches}
+    tokens = [
+        token
+        for token in tokens
+        if not token.startswith("--enable-features=")
+        and not any(token == key or token.startswith(key + "=") for key in managed_keys)
+    ]
+
+    insert_at = next(
+        (
+            index
+            for index, token in enumerate(tokens)
+            if len(token) == 2 and token.startswith("%")
+        ),
+        len(tokens),
+    )
+    for switch in switches:
+        tokens.insert(insert_at, f"--{switch}")
+        insert_at += 1
+    if features:
+        tokens.insert(insert_at, f"--enable-features={','.join(features)}")
+
+    if env:
+        tokens = ["env", *(f"{k}={v}" for k, v in env.items()), *tokens]
+
+    return " ".join(tokens)
+
+
+class DesktopEntry(EntrySpec):
+    desktop: str
+    features: list[str] = []
+    switches: list[str] = []
+    env: dict[str, str] = {}
+
+
+class DesktopCook(StateCook):
+    manager = "desktop"
+    entry_model = DesktopEntry
+
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        self.apps = {
+            name: DesktopEntry.model_validate(raw) for name, raw in section.items()
+        }
+
+    def list_resources(self) -> list[str]:
+        return list(self.apps)
+
+    def _target(self, name: str) -> Path:
+        system_desktop = Path(self.apps[name].desktop)
+        return Path.home() / ".local/share/applications" / system_desktop.name
+
+    def _render(self, name: str) -> bytes | None:
+        app = self.apps[name]
+        system_desktop = Path(app.desktop)
+        if not system_desktop.exists():
+            return None
+        env = app.env
+        features = app.features
+        switches = app.switches
+        lines = []
+        for line in system_desktop.read_text().splitlines():
+            if line.startswith("Exec="):
+                lines.append(
+                    "Exec=" + rewrite_exec_line(line[5:], env, features, switches)
+                )
+            else:
+                lines.append(line)
+        return ("\n".join(lines) + "\n").encode()
+
+    def get_current_state(self) -> dict[str, str]:
+        states: dict[str, str] = {}
+        for name in self.apps:
+            target = self._target(name)
+            states[name] = (
+                hashlib.sha256(target.read_bytes()).hexdigest()
+                if target.exists()
+                else "absent"
+            )
+        return states
+
+    def get_desired_state(self) -> dict[str, str]:
+        states: dict[str, str] = {}
+        for name in self.apps:
+            content = self._render(name)
+            states[name] = (
+                hashlib.sha256(content).hexdigest() if content else "(no source)"
+            )
+        return states
+
+    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
+        app = self.apps[name]
+        return (app.pre_hook, chain_hooks(app.post_hook, KSYCOCA_REFRESH))
+
+    def apply_resource(self, name: str) -> StateChangeOutcome:
+        content = self._render(name)
+        if content is None:
+            return StateChangeOutcome(
+                changed=False,
+                message=f"{self.apps[name].desktop} not found; install the package first.",
+            )
+        changed = write_if_changed(self._target(name), content, note=name)
+        if changed:
+            logger.info("Restart the app to apply the new Exec= line.")
+        return StateChangeOutcome(changed=changed)
