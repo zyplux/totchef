@@ -21,33 +21,24 @@ class SettingsEntry(EntrySpec):
     settings_env: dict[str, str] = {}
 
 
-class SettingsCook(StateCook):
+class SettingsCook(StateCook[SettingsEntry]):
     manager = "settings"
     entry_model = SettingsEntry
 
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.apps = {
-            name: SettingsEntry.model_validate(raw) for name, raw in section.items()
-        }
-
-    def list_resources(self) -> list[str]:
-        return list(self.apps)
-
-    def _target(self, name: str) -> Path:
-        return Path.home() / self.apps[name].settings_json
+    def _target_path(self, name: str) -> Path:
+        return Path.home() / self.entries[name].settings_json
 
     def _render(self, name: str) -> bytes:
-        target = self._target(name)
-        env_overrides = self.apps[name].settings_env
+        target = self._target_path(name)
+        env_overrides = self.entries[name].settings_env
         existing: dict = json.loads(target.read_text()) if target.exists() else {}
         merged = {**existing, "env": {**existing.get("env", {}), **env_overrides}}
         return (json.dumps(merged, indent=2) + "\n").encode()
 
     def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
-        for name in self.apps:
-            target = self._target(name)
+        for name in self.entries:
+            target = self._target_path(name)
             states[name] = (
                 hashlib.sha256(target.read_bytes()).hexdigest()
                 if target.exists()
@@ -57,13 +48,12 @@ class SettingsCook(StateCook):
 
     def get_desired_state(self) -> dict[str, str]:
         return {
-            name: hashlib.sha256(self._render(name)).hexdigest() for name in self.apps
+            name: hashlib.sha256(self._render(name)).hexdigest()
+            for name in self.entries
         }
 
-    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        app = self.apps[name]
-        return (app.pre_hook, app.post_hook)
-
     def apply_resource(self, name: str) -> StateChangeOutcome:
-        changed = write_if_changed(self._target(name), self._render(name), note=name)
+        changed = write_if_changed(
+            self._target_path(name), self._render(name), note=name
+        )
         return StateChangeOutcome(changed=changed)

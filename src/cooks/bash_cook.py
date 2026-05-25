@@ -25,18 +25,9 @@ class BashEntry(EntrySpec):
     desired: str = ""
 
 
-class BashCook(StateCook):
+class BashCook(StateCook[BashEntry]):
     manager = "bash"
     entry_model = BashEntry
-
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.entries = {
-            name: BashEntry.model_validate(raw) for name, raw in section.items()
-        }
-
-    def list_resources(self) -> list[str]:
-        return list(self.entries)
 
     def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
@@ -52,10 +43,6 @@ class BashCook(StateCook):
 
     def get_desired_state(self) -> dict[str, str]:
         return {name: entry.desired for name, entry in self.entries.items()}
-
-    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        entry = self.entries[name]
-        return (entry.pre_hook, entry.post_hook)
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         entry = self.entries[name]

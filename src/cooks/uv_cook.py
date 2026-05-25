@@ -20,7 +20,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import PackagesConfig, SyncOutcome, VersionedCook
+from cook_base import PackageListCook, SyncOutcome
 from harness import find_binary, stream_subprocess
 
 
@@ -42,23 +42,12 @@ def parse_tool_versions(uv: Path) -> dict[str, str]:
     return versions
 
 
-class UvCook(VersionedCook):
+class UvCook(PackageListCook):
     manager = "uv"
-    entry_model = PackagesConfig
-
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.packages = PackagesConfig.model_validate(section).packages
-
-    def list_requested(self) -> list[str]:
-        return self.packages
 
     def list_installed(self) -> dict[str, str]:
         uv = find_binary("uv")
         return parse_tool_versions(uv) if uv else {}
-
-    def find_latest(self, names: list[str]) -> dict[str, str | None]:
-        return dict.fromkeys(names)
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         work = [("install", n) for n in to_install] + [

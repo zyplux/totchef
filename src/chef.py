@@ -9,7 +9,6 @@ Exit codes: 0 success, 75 soft fail (named in a banner), 1 hard fail (aborts).
 import os
 import sys
 import tomllib
-from datetime import datetime
 
 import typer
 from loguru import logger
@@ -17,7 +16,7 @@ from loguru import logger
 from cook_base import CookResult
 from cook_runner import run_recipe
 from harness import RECIPE_TOML, SOFT_FAIL_EXIT
-from logs import LOG_DIR, SHARED_LOG_ENV, drain_logs, start_logging
+from logs import SHARED_LOG_ENV, drain_logs, start_logging
 from schema_lint import validate
 from terminal import show_table
 
@@ -81,11 +80,6 @@ def main(
         return
 
     ensure_root()
-    LOG_DIR.mkdir(exist_ok=True)
-    os.environ.setdefault(
-        SHARED_LOG_ENV,
-        str(LOG_DIR / f"sys-conf-py-{datetime.now():%Y%m%d-%H%M%S}.log"),
-    )
     start_logging()
 
     with RECIPE_TOML.open("rb") as f:

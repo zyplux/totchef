@@ -6,7 +6,7 @@ for desired-state resources. The full contract is in CLAUDE.md.
 """
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -120,11 +120,48 @@ class VersionedCook(CookBase):
         raise NotImplementedError
 
 
-class StateCook(CookBase):
+class PackageListCook(VersionedCook):
+    """VersionedCook over a plain `packages = [...]` section (cargo, uv, snap,
+    apt_pkg). The base validates the list into `self.packages` and serves
+    `list_requested` plus a no-op `find_latest` — most managers have no cheap
+    "latest" probe, so chef derives the change from the installed version moving.
+    A manager with a cheap candidate (apt) overrides `find_latest`; every cook
+    still implements `list_installed` and `sync`."""
+
+    entry_model = PackagesConfig
+
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        self.packages = PackagesConfig.model_validate(section).packages
+
+    def list_requested(self) -> list[str]:
+        return self.packages
+
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
+        return dict.fromkeys(names)
+
+
+class StateCook[EntryModel: EntrySpec](CookBase):
+    """Desired-state cook over a subtable section. The base validates every entry
+    against `entry_model` into `self.entries` (name -> typed EntrySpec) and serves
+    the two members every such cook shares: `list_resources` and the default
+    `get_hooks` (pre_hook/post_hook straight off the entry). Subclasses implement
+    the diff — `get_current_state` / `get_desired_state` / `apply_resource` — and
+    override `get_hooks` only to compose an intrinsic hook (see chain_hooks)."""
+
     kind = "state"
 
+    def __init__(self, section: dict) -> None:
+        super().__init__(section)
+        model = self.entry_model
+        assert model is not None, f"{type(self).__name__} must set entry_model"
+        self.entries: dict[str, EntryModel] = {
+            name: cast("EntryModel", model.model_validate(raw))
+            for name, raw in section.items()
+        }
+
     def list_resources(self) -> list[str]:
-        raise NotImplementedError
+        return list(self.entries)
 
     def get_current_state(self) -> dict[str, str]:
         raise NotImplementedError
@@ -133,7 +170,8 @@ class StateCook(CookBase):
         raise NotImplementedError
 
     def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        return (None, None)
+        entry = self.entries[name]
+        return (entry.pre_hook, entry.post_hook)
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         raise NotImplementedError

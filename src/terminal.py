@@ -52,7 +52,7 @@ ACTION_STYLES = {
     "unchanged": "dim",
     "ok": "dim",
     "would install": "yellow",
-    "would update": "yellow",
+    "would sync": "yellow",
     "would upgrade": "yellow",
     "would apply": "yellow",
     "skipped": "dim",

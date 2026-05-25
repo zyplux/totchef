@@ -74,23 +74,14 @@ def configure_repo(name: str, repo: AptRepoEntry, release: str) -> bool:
     return changed
 
 
-class AptRepoCook(StateCook):
+class AptRepoCook(StateCook[AptRepoEntry]):
     needs_root = True
     manager = "apt-repo"
     entry_model = AptRepoEntry
 
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.repos = {
-            name: AptRepoEntry.model_validate(raw) for name, raw in section.items()
-        }
-
-    def list_resources(self) -> list[str]:
-        return list(self.repos)
-
     def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
-        for name, repo in self.repos.items():
+        for name, repo in self.entries.items():
             present = (
                 build_keyring_path(name, repo).exists()
                 and build_source_path(name, repo).exists()
@@ -99,14 +90,10 @@ class AptRepoCook(StateCook):
         return states
 
     def get_desired_state(self) -> dict[str, str]:
-        return dict.fromkeys(self.repos, "configured")
-
-    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        repo = self.repos[name]
-        return (repo.pre_hook, repo.post_hook)
+        return dict.fromkeys(self.entries, "configured")
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         release = detect_release()
         logger.info(f"Configuring repo {name} (release codename: {release})")
-        changed = configure_repo(name, self.repos[name], release)
+        changed = configure_repo(name, self.entries[name], release)
         return StateChangeOutcome(changed=changed)

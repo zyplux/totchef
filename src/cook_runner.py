@@ -81,7 +81,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
             if installed is None:
                 action, changed = "would install", True
             elif available is None:
-                action, changed = "would update", True
+                action, changed = "would sync", True
             elif available != installed:
                 action, changed = "would upgrade", True
             else:

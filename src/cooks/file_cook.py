@@ -38,47 +38,37 @@ class FileEntry(EntrySpec):
         return self
 
 
-class FileCook(StateCook):
+class FileCook(StateCook[FileEntry]):
     manager = "file"
     entry_model = FileEntry
 
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.entries = {
-            name: FileEntry.model_validate(raw) for name, raw in section.items()
-        }
-
-    def _content(self, name: str) -> bytes:
+    def _load_content(self, name: str) -> bytes:
         entry = self.entries[name]
         if entry.source is not None:
             return (FILES_DIR / entry.source).read_bytes()
         return (entry.content or "").encode()
 
-    def _path(self, name: str) -> Path:
+    def _target_path(self, name: str) -> Path:
         return Path(self.entries[name].path)
 
-    def _mode(self, name: str) -> int:
+    def _parse_mode(self, name: str) -> int:
         return int(self.entries[name].mode, 8)
-
-    def list_resources(self) -> list[str]:
-        return list(self.entries)
 
     def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name in self.entries:
-            path = self._path(name)
+            path = self._target_path(name)
             states[name] = _digest(path.read_bytes()) if path.exists() else "absent"
         return states
 
     def get_desired_state(self) -> dict[str, str]:
-        return {name: _digest(self._content(name)) for name in self.entries}
-
-    def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        entry = self.entries[name]
-        return (entry.pre_hook, entry.post_hook)
+        return {name: _digest(self._load_content(name)) for name in self.entries}
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         changed = write_if_changed(
-            self._path(name), self._content(name), self._mode(name), note=name
+            self._target_path(name),
+            self._load_content(name),
+            self._parse_mode(name),
+            note=name,
         )
         return StateChangeOutcome(changed=changed)

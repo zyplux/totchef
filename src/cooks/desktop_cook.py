@@ -79,25 +79,16 @@ class DesktopEntry(EntrySpec):
     env: dict[str, str] = {}
 
 
-class DesktopCook(StateCook):
+class DesktopCook(StateCook[DesktopEntry]):
     manager = "desktop"
     entry_model = DesktopEntry
 
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.apps = {
-            name: DesktopEntry.model_validate(raw) for name, raw in section.items()
-        }
-
-    def list_resources(self) -> list[str]:
-        return list(self.apps)
-
-    def _target(self, name: str) -> Path:
-        system_desktop = Path(self.apps[name].desktop)
+    def _target_path(self, name: str) -> Path:
+        system_desktop = Path(self.entries[name].desktop)
         return Path.home() / ".local/share/applications" / system_desktop.name
 
     def _render(self, name: str) -> bytes | None:
-        app = self.apps[name]
+        app = self.entries[name]
         system_desktop = Path(app.desktop)
         if not system_desktop.exists():
             return None
@@ -116,8 +107,8 @@ class DesktopCook(StateCook):
 
     def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
-        for name in self.apps:
-            target = self._target(name)
+        for name in self.entries:
+            target = self._target_path(name)
             states[name] = (
                 hashlib.sha256(target.read_bytes()).hexdigest()
                 if target.exists()
@@ -127,7 +118,7 @@ class DesktopCook(StateCook):
 
     def get_desired_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
-        for name in self.apps:
+        for name in self.entries:
             content = self._render(name)
             states[name] = (
                 hashlib.sha256(content).hexdigest() if content else "(no source)"
@@ -135,7 +126,7 @@ class DesktopCook(StateCook):
         return states
 
     def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        app = self.apps[name]
+        app = self.entries[name]
         return (app.pre_hook, chain_hooks(app.post_hook, KSYCOCA_REFRESH))
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
@@ -143,9 +134,9 @@ class DesktopCook(StateCook):
         if content is None:
             return StateChangeOutcome(
                 changed=False,
-                message=f"{self.apps[name].desktop} not found; install the package first.",
+                message=f"{self.entries[name].desktop} not found; install the package first.",
             )
-        changed = write_if_changed(self._target(name), content, note=name)
+        changed = write_if_changed(self._target_path(name), content, note=name)
         if changed:
             logger.info("Restart the app to apply the new Exec= line.")
         return StateChangeOutcome(changed=changed)
