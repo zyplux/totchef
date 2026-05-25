@@ -7,7 +7,7 @@ with hybrid graphics: i915 + NVIDIA 580.142-open.
 
 Lock screen → hours of `s2idle` → black screen with kernel WARN:
 
-```
+```text
 RIP: 0010:__jump_label_patch.cold+0x24/0x26
 Console: switching to colour frame buffer device 240x67
 ```
@@ -41,7 +41,7 @@ less tolerant of any follow-on patching anomaly.
 
 ## Verify after reboot
 
-```
+```text
 cat /sys/power/mem_sleep      # expect: [deep] s2idle
 cat /proc/cmdline             # includes mem_sleep_default=deep
 systemctl is-enabled nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
@@ -51,8 +51,10 @@ systemctl is-enabled nvidia-suspend.service nvidia-resume.service nvidia-hiberna
 
 1. Boot kernel `7.0.0-14-generic` from GRUB → Advanced options.
    If stable, hold it:
-   ```
+
+   ```text
    sudo apt-mark hold linux-image-7.0.0-15-generic linux-modules-7.0.0-15-generic
    ```
+
 2. Reproduce, inspect `/var/crash/` (kdump from `linux-crashdump`).
 3. File on Launchpad against `linux` with `journalctl -k -b -1` excerpt.

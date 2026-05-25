@@ -28,6 +28,7 @@ Flow (`src/chef.py`): re-exec as root → parse `recipe.toml` → `schema_lint.v
 **`recipe.toml` is the single source of config.** Its header documents every section and the two chef-reserved per-entry fields, `needs_root` and `depends_on` (stripped before the slice reaches the cook). A subtable section (`[url.<name>]`) fans out to one graph node per entry; a plain-data section (`[apt_pkg]`) is one node.
 
 **Two cook shapes** (`src/cook_base.py`):
+
 - `VersionedCook` — versioned packages. Implements `list_requested` / `list_installed` / `find_latest` / `sync`. `PackageListCook` covers plain `packages = [...]` sections (cargo, uv, snap, apt_pkg).
 - `StateCook` — desired-state resources. Implements `get_current_state` / `get_desired_state` / `apply_resource`, plus `get_hooks`. `FileStateCook` diffs by sha256 of rendered bytes vs on-disk file.
 

@@ -88,31 +88,31 @@ The running process already has `--ozone-platform=wayland`, so the Wayland backe
 
 **Video decode (extends what README.md already enables):**
 
-```
+```text
 --enable-features=VaapiOnNvidiaGPUs,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiIgnoreDriverChecks
 ```
 
 **Video encode** — offloads WebRTC and screen-recording encode to NVENC instead of x264 on the CPU:
 
-```
+```text
 --enable-features=AcceleratedVideoEncoder
 ```
 
 **PipeWire screen capture** — required for hardware-accelerated screen share under Wayland; without it `getDisplayMedia()` either fails or falls back to a slow software path:
 
-```
+```text
 --enable-features=WebRTCPipeWireCapturer
 ```
 
 **Vulkan backend for ANGLE/Skia** — replaces the GL backend with Vulkan, which on recent NVIDIA drivers (550+) tends to be faster for compositing and 2D canvas. This one is the most likely to regress on a specific driver/site combo, so flip it last and verify at `brave://gpu`:
 
-```
+```text
 --enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE
 ```
 
 **Explicit sync on Wayland** — `WaylandLinuxDrmSyncobj` (Brave 1.70+, NVIDIA 555+). Big quality-of-life win for NVIDIA-on-Wayland: removes the implicit-sync flicker and improves frame pacing. Cheap to try because the NVIDIA driver advertises the extension or it silently no-ops.
 
-```
+```text
 --enable-features=WaylandLinuxDrmSyncobj
 ```
 
