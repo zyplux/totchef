@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from cook_base import PackagesConfig, SyncOutcome, VersionedCook
+from cook_base import PackageListCook, SyncOutcome
 from harness import stream_subprocess
 from logs import log_toon
 
@@ -86,29 +86,24 @@ def build_policy_row(package: str) -> dict:
     }
 
 
-class AptPkgCook(VersionedCook):
+class AptPkgCook(PackageListCook):
     needs_root = True
     manager = "apt"
-    entry_model = PackagesConfig
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.packages = PackagesConfig.model_validate(section).packages
         self._policy_cache: dict[str, dict] = {}
 
-    def list_requested(self) -> list[str]:
-        return self.packages
-
-    def _policy(self, package: str) -> dict:
-        # Cache within one probe pass so list_installed + latest_available share
+    def _get_policy(self, package: str) -> dict:
+        # Cache within one probe pass so list_installed + find_latest share
         # a single apt-cache call per package.
         if package not in self._policy_cache:
             self._policy_cache[package] = build_policy_row(package)
         return self._policy_cache[package]
 
-    def _fresh_policy(self, package: str) -> dict:
+    def _refresh_policy(self, package: str) -> dict:
         self._policy_cache.pop(package, None)
-        return self._policy(package)
+        return self._get_policy(package)
 
     def list_installed(self) -> dict[str, str]:
         # Bust the cache so a probe after sync sees post-transaction versions.
@@ -116,12 +111,12 @@ class AptPkgCook(VersionedCook):
         return {
             p: row["installed"]
             for p in self.packages
-            if (row := self._policy(p))["installed"] != "(none)"
+            if (row := self._get_policy(p))["installed"] != "(none)"
         }
 
     def find_latest(self, names: list[str]) -> dict[str, str | None]:
         return {
-            p: (None if (c := self._policy(p)["candidate"]) == "(none)" else c)
+            p: (None if (c := self._get_policy(p)["candidate"]) == "(none)" else c)
             for p in names
         }
 
@@ -130,7 +125,7 @@ class AptPkgCook(VersionedCook):
         # `nala list --upgradable` exits 1 when nothing matches (grep convention).
         nala("list", "--upgradable", note="Upgradable packages:", check=False)
 
-        rows = [self._fresh_policy(p) for p in self.packages]
+        rows = [self._refresh_policy(p) for p in self.packages]
         log_toon(
             rows,
             note="Verification — installed/candidate versions and effective pin priorities:",

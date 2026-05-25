@@ -22,7 +22,7 @@ soft (the snap stays usable). Runs as root (chef runs root cooks in-process).
 import shutil
 import subprocess
 
-from cook_base import PackagesConfig, SyncOutcome, VersionedCook
+from cook_base import PackageListCook, SyncOutcome
 from harness import stream_subprocess
 
 
@@ -42,23 +42,12 @@ def parse_installed_snaps() -> dict[str, str]:
     return versions
 
 
-class SnapCook(VersionedCook):
+class SnapCook(PackageListCook):
     needs_root = True
     manager = "snap"
-    entry_model = PackagesConfig
-
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.packages = PackagesConfig.model_validate(section).packages
-
-    def list_requested(self) -> list[str]:
-        return self.packages
 
     def list_installed(self) -> dict[str, str]:
         return parse_installed_snaps() if shutil.which("snap") else {}
-
-    def find_latest(self, names: list[str]) -> dict[str, str | None]:
-        return dict.fromkeys(names)
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         work = [("install", n) for n in to_install] + [

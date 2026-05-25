@@ -4,84 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A re-runnable, declarative Ubuntu/Kubuntu Wayland laptop configurator. `src/recipe.toml`
-declares desired state; `chef` topo-sorts it into a graph and runs cooks that probe and
-act. Same path serves first-run bootstrap and ongoing upkeep — idle re-runs are cheap
-because nothing rewrites what already matches.
+Idempotent, declarative system config for a fresh Ubuntu/Kubuntu Wayland laptop: apt repos/packages, vendor CLIs, eGPU auto-PRIME, and per-app GPU flags. One script (`chef`) serves both first-run bootstrap and ongoing upkeep — re-runs only touch what would actually change.
 
 ## Commands
 
-Recipes are driven through `just` (see `justfile`):
+Tooling is `uv` (Python ≥ 3.14) driven through `just`:
 
-- `just up` — run chef (re-execs itself under `sudo`). Applies `recipe.toml`.
-- `just plan` — dry run: probe and print the report, no changes, no root.
-- `just lint` — `ruff check --fix`, `ruff format`, then `chef --lint` (validates `recipe.toml` against cook schemas, no root).
+- `just up` — apply `recipe.toml` (re-execs under sudo).
+- `just plan` — dry-run: probe and print the report, no changes, no root.
+- `just lint` — `ruff check --fix` + `ruff format` + `chef --lint` (validate `recipe.toml` against cook schemas).
 - `just tc` — lint, then `uvx pyright src`.
-- `just test` — tc, then `uv run pytest`.
-- `just clone <owner/repo>` — shallow clone into `reference_clones/` for reading upstream code.
-
-Run a single test (pytest `pythonpath`/`testpaths` are configured in `pyproject.toml`):
-
-```bash
-uv run pytest tests/test_recipe_graph.py::test_name
-```
-
-Python 3.14, uv-managed. Direct invoke: `./src/chef.py [--dry-run|--lint]`.
+- `just test` — typecheck, then `uv run pytest`.
+- Single test: `uv run pytest tests/test_recipe_graph.py::test_name`.
 
 ## Architecture
 
-Pipeline (`recipe.toml` → report):
+The core abstraction is **chef** (the orchestrator) driving **cooks** (thin per-domain managers). Chef owns every diff/idempotency decision; a cook only *probes* current state and *acts* — it holds no diff logic.
 
-`schema_lint.validate` → `recipe_graph` (build nodes + dependency graph) →
-`cook_runner.run_recipe` (topo-sort + execute) → `cooks/*` → `chef.print_report`.
+Flow (`src/chef.py`): re-exec as root → parse `recipe.toml` → `schema_lint.validate` → `recipe_graph` builds a DAG → `cook_runner.run_recipe` topo-sorts and runs it → report. Exit codes: `0` ok, `75` soft fail, `1` hard fail (aborts).
 
-**chef owns the diff; cooks only probe and act.** Cooks hold no idempotency logic. chef
-decides install-vs-upgrade (VersionedCook) or current-vs-desired (StateCook) and calls
-the cook to execute that decision.
+**Section → cook by naming convention, no registry.** A `recipe.toml` section `[foo]` resolves to `cooks/foo_cook.py`, or `cooks/foo_root_cook.py` for an always-root cook. The module must define exactly one `CookBase` subclass (`recipe_graph.load_cook_class`). Adding a domain = add a `[section]` to `recipe.toml` + a `cooks/<section>_cook.py` with one cook class and its `entry_model`.
 
-**Section → cook by filename, no registry.** Recipe section `[foo]` resolves to
-`cooks/foo_cook.py`, or `cooks/foo_root_cook.py` for an always-root cook.
-`load_cook_class` imports whichever exists and requires exactly one `CookBase` subclass
-per module. To add functionality: add a section to `recipe.toml` and create the cook file
-— nothing else to register.
+**`recipe.toml` is the single source of config.** Its header documents every section and the two chef-reserved per-entry fields, `needs_root` and `depends_on` (stripped before the slice reaches the cook). A subtable section (`[url.<name>]`) fans out to one graph node per entry; a plain-data section (`[apt_pkg]`) is one node.
 
-**Two cook shapes** (`cook_base.py`):
+**Two cook shapes** (`src/cook_base.py`):
 
-- `VersionedCook` — packages with versions: `list_requested` / `list_installed` / `find_latest` / `sync`.
-- `StateCook` — desired-state resources: `list_resources` / `get_current_state` / `get_desired_state` / `get_hooks` / `apply_resource`.
+- `VersionedCook` — versioned packages. Implements `list_requested` / `list_installed` / `find_latest` / `sync`. `PackageListCook` covers plain `packages = [...]` sections (cargo, uv, snap, apt_pkg).
+- `StateCook` — desired-state resources. Implements `get_current_state` / `get_desired_state` / `apply_resource`, plus `get_hooks`. `FileStateCook` diffs by sha256 of rendered bytes vs on-disk file.
 
-Each cook declares an `entry_model` (a pydantic `EntrySpec` subclass, `extra='forbid'`)
-that is the recipe schema for its entries — `--lint` validates every node's slice against
-it, so a typo'd recipe key fails fast with a precise message.
+`EntrySpec` (pydantic, `extra='forbid'`) is each cook's recipe-entry schema, so a typo'd key fails the run instead of being silently ignored. `pre_hook` (guard: non-zero skips the item) and `post_hook` (runs after a change) live on every entry; cooks compose intrinsic hooks via `chain_hooks`.
 
-**Graph & scheduling.** A subtable section (`[url.<name>]`) expands to one node per entry;
-a plain section (`[apt_pkg]`) is a single node. Per-entry `depends_on` (name an entry, a
-single-node section, or a whole section to fan out) and `needs_root` are read by chef and
-stripped before the slice reaches the cook. `run_recipe` walks the graph with
-`graphlib.TopologicalSorter`, running ready nodes concurrently.
+**Privilege model** (`src/harness.py`, `cook_runner`): chef runs as root. A `needs_root` node runs in-process; every other node is run in a **forked child** that calls `become_user()` (drops gid→groups→uid, repoints `HOME`/`USER`/`PATH` at the invoking `SUDO_USER`) and pipes its `CookResult` back as pickle. `--lint` rejects `needs_root` on a subtable header — grant it per leaf entry (least privilege). Forking only happens from the main thread to keep loguru's locks safe.
 
-**Privilege model.** chef re-execs under `sudo` once. Each node runs either in-process as
-root (`needs_root`) or in a forked child that drops to the invoking user via
-`harness.become_user()` and pipes its `CookResult` back (so `CookResult` and its rows must
-stay picklable — plain dataclasses only). `needs_root` is granted per leaf, never on a
-subtable header (`--lint` rejects that) — least privilege.
+**Logging** (`src/logs.py`): one parent thread (the "pump") owns the log file and terminal — fd 1/2 of the parent and every forked cook funnel through a single pipe, so a live rich region (table/progress in `terminal.py`) never interleaves with log lines. Logs are timestamped per run under `logs/`.
 
-**Logging is single-writer** (`logs.py`). fd 1/2 are redirected into a pipe that one pump
-thread reads, so the parent and every forked cook funnel through one writer. The log file
-gets minimalist TOON; the terminal gets rich tables/progress bars rendered on a saved dup
-of the real stdout (`TERMINAL_FD`). Forked user cooks must not draw to the terminal — they
-emit log lines and the parent renders after collecting results. `drain_logs()` is a FIFO
-barrier so a directly-rendered table lands after the logs preceding it.
+## Static assets
 
-**Module layering.** `logs.py` is a leaf (stdlib + loguru + toon). `harness.py` (privilege
-drop, streamed subprocess, `write_if_changed`, binary discovery, URL fetch) builds on it.
-`recipe_graph` → `schema_lint` → `cook_runner` layer on top.
-
-Exit codes: `0` success, `75` soft fail (recoverable, named in a banner), `1` hard fail
-(aborts the run).
-
-## Conventions specific to this repo
-
-- Cook docstrings state privilege scope and which manager dirs they write into — keep that when editing.
-- Static assets installed verbatim (systemd units, the `write-if-changed` CLI) live in `src/files/`; shell snippets pipe writes through `write-if-changed` rather than writing files directly.
-- Markdown is linted with `rumdl` (`.rumdl.toml`).
+`src/files/` holds files installed verbatim (the `egpu-prime` switch + its systemd unit, and `write-if-changed`), referenced by `[file.<name>]` entries.

@@ -12,13 +12,12 @@ Diffable: desired = hash of the rendered JSON, current = hash of what's on disk,
 so unchanged apps are skipped. Runs as the invoking user, writing into $HOME.
 """
 
-import hashlib
 import json
 from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import EntrySpec, StateChangeOutcome, StateCook, chain_hooks
+from cook_base import EntrySpec, FileStateCook, StateChangeOutcome, chain_hooks
 from harness import logger, write_if_changed
 
 
@@ -41,30 +40,21 @@ class ChromiumFlagsEntry(EntrySpec):
         return self
 
 
-class ChromiumFlagsCook(StateCook):
+class ChromiumFlagsCook(FileStateCook[ChromiumFlagsEntry]):
     manager = "chromium-flags"
     entry_model = ChromiumFlagsEntry
+    _unrendered_label = "(no base file)"
 
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.apps = {
-            name: ChromiumFlagsEntry.model_validate(raw)
-            for name, raw in section.items()
-        }
-
-    def list_resources(self) -> list[str]:
-        return list(self.apps)
-
-    def _target(self, name: str) -> Path:
-        app = self.apps[name]
+    def _target_path(self, name: str) -> Path:
+        app = self.entries[name]
         return Path.home() / (app.local_state or app.argv_json or "")
 
     def _render(self, name: str) -> bytes | None:
         """Desired file bytes, or None when there's nothing to do / no base file
         to patch. Returns the on-disk bytes verbatim when no flag would change,
         so desired == current and chef skips the entry."""
-        app = self.apps[name]
-        target = self._target(name)
+        app = self.entries[name]
+        target = self._target_path(name)
         if app.local_state is not None:
             flags = app.local_state_flags
             if not target.exists():
@@ -95,28 +85,8 @@ class ChromiumFlagsCook(StateCook):
         merged = {**existing, **argv}
         return (json.dumps(merged, indent=2) + "\n").encode()
 
-    def get_current_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.apps:
-            target = self._target(name)
-            states[name] = (
-                hashlib.sha256(target.read_bytes()).hexdigest()
-                if target.exists()
-                else "absent"
-            )
-        return states
-
-    def get_desired_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.apps:
-            content = self._render(name)
-            states[name] = (
-                hashlib.sha256(content).hexdigest() if content else "(no base file)"
-            )
-        return states
-
     def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        app = self.apps[name]
+        app = self.entries[name]
         # Skip the Local State write while the browser runs (it would race the
         # browser's own write); `! pgrep` exits non-zero when found, so chef skips.
         guard = (
@@ -131,9 +101,9 @@ class ChromiumFlagsCook(StateCook):
         if content is None:
             return StateChangeOutcome(
                 changed=False,
-                message=f"{self._target(name)} not found; launch the app once, then re-run.",
+                message=f"{self._target_path(name)} not found; launch the app once, then re-run.",
             )
-        changed = write_if_changed(self._target(name), content, note=name)
+        changed = write_if_changed(self._target_path(name), content, note=name)
         if changed:
             logger.info(f"{name}: restart the app to apply the new flags.")
         return StateChangeOutcome(changed=changed)

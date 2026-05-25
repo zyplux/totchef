@@ -184,9 +184,10 @@ post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidi
 
 # ---------------------------------------------------------------------------
 # bash — apt setup as idempotent shell snippets that prepare the apt environment
-# before any repo/package work. Each entry's read-only `check_installed` yields
-# the current token and `desired` the target; chef runs `install_or_update` only
-# when they differ. needs_root and depends_on are set per entry.
+# before any repo/package work. Each entry mirrors the StateCook lifecycle in
+# TOML: `current_state` (a read-only probe echoing the current token),
+# `desired_state` (the target token), and `apply` (run only when they differ).
+# needs_root and depends_on are set per entry.
 # ---------------------------------------------------------------------------
 
 # Cross-repo safety: uprank Ubuntu main/updates/security to priority 900 (the
@@ -196,7 +197,7 @@ post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidi
 # For a per-package third-party override, drop a pin > 900 in preferences.d/.
 [bash.ubuntu_pin]
 needs_root = true
-install_or_update = '''
+apply = '''
 . /etc/os-release
 rel="${VERSION_CODENAME:-$UBUNTU_CODENAME}"
 [ -n "$rel" ] || { echo "ERROR: could not determine release codename" >&2; exit 1; }
@@ -215,30 +216,30 @@ Pin: release o=Ubuntu, a=$rel-security
 Pin-Priority: 900
 EOF
 '''
-check_installed = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
-desired = "present"
+current_state = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
+desired_state = "present"
 depends_on = ["file.write_if_changed"]
 
 # Stop code-insiders' postinst from rewriting our [apt_repo.vscode] source.
 # debconf-set-selections is idempotent; runs before any apt transaction.
 [bash.code_insiders_debconf]
 needs_root = true
-install_or_update = "echo 'code-insiders code-insiders/add-microsoft-repo boolean false' | debconf-set-selections"
-check_installed = "debconf-show code-insiders 2>/dev/null | grep -q 'add-microsoft-repo: false' && echo set || echo unset"
-desired = "set"
+apply = "echo 'code-insiders code-insiders/add-microsoft-repo boolean false' | debconf-set-selections"
+current_state = "debconf-show code-insiders 2>/dev/null | grep -q 'add-microsoft-repo: false' && echo set || echo unset"
+desired_state = "set"
 
 # Prerequisites for repo/key handling and the package transaction. nala is the
 # package frontend used by [apt_pkg]; curl/gnupg/ca-certificates back key
 # fetch + dearmor. Bootstraps from a clean system that only has uv.
 [bash.apt_prereqs]
 needs_root = true
-install_or_update = '''
+apply = '''
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends curl gnupg ca-certificates nala
 '''
-check_installed = "command -v nala >/dev/null && echo present || echo absent"
-desired = "present"
+current_state = "command -v nala >/dev/null && echo present || echo absent"
+desired_state = "present"
 
 # ---------------------------------------------------------------------------
 # apt_repo — third-party apt repos. GPG key under /usr/share/keyrings/<name>.gpg

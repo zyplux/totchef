@@ -9,10 +9,9 @@ KDE-cache refresh `post_hook` only when a .desktop actually changed. Runs as the
 invoking user, writing into $HOME; depends_on the packages it tunes.
 """
 
-import hashlib
 from pathlib import Path
 
-from cook_base import EntrySpec, StateChangeOutcome, StateCook, chain_hooks
+from cook_base import EntrySpec, FileStateCook, StateChangeOutcome, chain_hooks
 from harness import logger, write_if_changed
 
 # Refresh KDE's ksycoca so the launcher stops spawning apps with the stale Exec
@@ -79,25 +78,17 @@ class DesktopEntry(EntrySpec):
     env: dict[str, str] = {}
 
 
-class DesktopCook(StateCook):
+class DesktopCook(FileStateCook[DesktopEntry]):
     manager = "desktop"
     entry_model = DesktopEntry
+    _unrendered_label = "(no source)"
 
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.apps = {
-            name: DesktopEntry.model_validate(raw) for name, raw in section.items()
-        }
-
-    def list_resources(self) -> list[str]:
-        return list(self.apps)
-
-    def _target(self, name: str) -> Path:
-        system_desktop = Path(self.apps[name].desktop)
+    def _target_path(self, name: str) -> Path:
+        system_desktop = Path(self.entries[name].desktop)
         return Path.home() / ".local/share/applications" / system_desktop.name
 
     def _render(self, name: str) -> bytes | None:
-        app = self.apps[name]
+        app = self.entries[name]
         system_desktop = Path(app.desktop)
         if not system_desktop.exists():
             return None
@@ -114,28 +105,8 @@ class DesktopCook(StateCook):
                 lines.append(line)
         return ("\n".join(lines) + "\n").encode()
 
-    def get_current_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.apps:
-            target = self._target(name)
-            states[name] = (
-                hashlib.sha256(target.read_bytes()).hexdigest()
-                if target.exists()
-                else "absent"
-            )
-        return states
-
-    def get_desired_state(self) -> dict[str, str]:
-        states: dict[str, str] = {}
-        for name in self.apps:
-            content = self._render(name)
-            states[name] = (
-                hashlib.sha256(content).hexdigest() if content else "(no source)"
-            )
-        return states
-
     def get_hooks(self, name: str) -> tuple[str | None, str | None]:
-        app = self.apps[name]
+        app = self.entries[name]
         return (app.pre_hook, chain_hooks(app.post_hook, KSYCOCA_REFRESH))
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
@@ -143,9 +114,9 @@ class DesktopCook(StateCook):
         if content is None:
             return StateChangeOutcome(
                 changed=False,
-                message=f"{self.apps[name].desktop} not found; install the package first.",
+                message=f"{self.entries[name].desktop} not found; install the package first.",
             )
-        changed = write_if_changed(self._target(name), content, note=name)
+        changed = write_if_changed(self._target_path(name), content, note=name)
         if changed:
             logger.info("Restart the app to apply the new Exec= line.")
         return StateChangeOutcome(changed=changed)

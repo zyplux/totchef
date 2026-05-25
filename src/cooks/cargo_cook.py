@@ -23,7 +23,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import PackagesConfig, SyncOutcome, VersionedCook
+from cook_base import PackageListCook, SyncOutcome
 from harness import find_binary, stream_subprocess
 
 
@@ -46,22 +46,11 @@ def parse_installed_crates() -> dict[str, str]:
     return versions
 
 
-class CargoCook(VersionedCook):
+class CargoCook(PackageListCook):
     manager = "cargo-binstall"
-    entry_model = PackagesConfig
-
-    def __init__(self, section: dict) -> None:
-        super().__init__(section)
-        self.packages = PackagesConfig.model_validate(section).packages
-
-    def list_requested(self) -> list[str]:
-        return self.packages
 
     def list_installed(self) -> dict[str, str]:
         return parse_installed_crates()
-
-    def find_latest(self, names: list[str]) -> dict[str, str | None]:
-        return dict.fromkeys(names)
 
     def _ensure_binstall(self) -> Path | None:
         if binstall := find_binary("cargo-binstall"):
