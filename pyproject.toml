@@ -22,3 +22,13 @@ testpaths = ["tests"]
 venvPath = "."
 venv = ".venv"
 extraPaths = ["src"]
+
+[tool.vulture]
+paths = ["src"]
+# Cooks are imported by name convention (recipe_graph.load_cook_class -> importlib),
+# so vulture sees no static reference and reports every cook class as dead. They are
+# the app's entry points, not dead code — ignore by suffix. Same for the pydantic
+# plumbing it can't trace: `model_config` is read by the model metaclass, and
+# @model_validator methods are invoked by the decorator, never called by name.
+ignore_names = ["*Cook", "model_config"]
+ignore_decorators = ["@model_validator"]

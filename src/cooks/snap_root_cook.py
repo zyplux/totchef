@@ -26,20 +26,24 @@ from cook_base import PackageListCook, SyncOutcome
 from harness import stream_subprocess
 
 
-def parse_installed_snaps() -> dict[str, str]:
-    """Map snap name -> version from `snap list`. The first line is a header
+def parse_snap_list(output: str) -> dict[str, str]:
+    """Map snap name -> version from `snap list` output. The first line is a header
     (`Name  Version  Rev  …`); every other line carries the name in column 0
     and the version in column 1."""
-    completed = subprocess.run(
-        ["snap", "list"], capture_output=True, text=True, check=True
-    )
     versions: dict[str, str] = {}
-    for line in completed.stdout.splitlines():
+    for line in output.splitlines():
         if not line or line.startswith("Name"):
             continue
         tokens = line.split()
         versions[tokens[0]] = tokens[1] if len(tokens) > 1 else "unknown"
     return versions
+
+
+def parse_installed_snaps() -> dict[str, str]:
+    completed = subprocess.run(
+        ["snap", "list"], capture_output=True, text=True, check=True
+    )
+    return parse_snap_list(completed.stdout)
 
 
 class SnapCook(PackageListCook):

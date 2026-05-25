@@ -11,7 +11,7 @@ invoking user, writing into $HOME; depends_on the packages it tunes.
 
 from pathlib import Path
 
-from cook_base import EntrySpec, FileStateCook, StateChangeOutcome, chain_hooks
+from cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec, chain_hooks
 from harness import logger, write_if_changed
 
 # Refresh KDE's ksycoca so the launcher stops spawning apps with the stale Exec
@@ -71,7 +71,7 @@ def rewrite_exec_line(
     return " ".join(tokens)
 
 
-class DesktopEntry(EntrySpec):
+class DesktopEntry(StateEntrySpec):
     desktop: str
     features: list[str] = []
     switches: list[str] = []

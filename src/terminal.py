@@ -61,7 +61,6 @@ ACTION_STYLES = {
     "post-failed": "red",
 }
 QUIET_ACTIONS = {"up-to-date", "unchanged", "ok"}
-RIGHT_ALIGNED = {"priority"}
 
 
 @cache
@@ -107,7 +106,7 @@ def _render_table(rows: list[dict], title: str) -> None:
         header_style="bold cyan",
     )
     for column in columns:
-        table.add_column(column, justify="right" if column in RIGHT_ALIGNED else "left")
+        table.add_column(column)
     for row in rows:
         cells = [
             Text(str(row[column]), style=ACTION_STYLES.get(str(row[column]), ""))
@@ -130,11 +129,9 @@ def _append_toon(rows: list[dict], title: str) -> None:
 
 class ProgressHandle:
     """No-op progress handle (the non-interactive yield). The live subclass drives a
-    rich bar; callers advance/update through this interface regardless of TTY."""
+    rich bar; callers advance through this interface regardless of TTY."""
 
     def advance(self, amount: int = 1) -> None: ...
-
-    def update(self, description: str) -> None: ...
 
 
 class _LiveProgress(ProgressHandle):
@@ -144,9 +141,6 @@ class _LiveProgress(ProgressHandle):
 
     def advance(self, amount: int = 1) -> None:
         self._progress.advance(self._task, amount)
-
-    def update(self, description: str) -> None:
-        self._progress.update(self._task, description=description)
 
 
 @contextmanager

@@ -32,7 +32,9 @@ Flow (`src/chef.py`): re-exec as root → parse `recipe.toml` → `schema_lint.v
 - `VersionedCook` — versioned packages. Implements `list_requested` / `list_installed` / `find_latest` / `sync`. `PackageListCook` covers plain `packages = [...]` sections (cargo, uv, snap, apt_pkg).
 - `StateCook` — desired-state resources. Implements `get_current_state` / `get_desired_state` / `apply_resource`, plus `get_hooks`. `FileStateCook` diffs by sha256 of rendered bytes vs on-disk file.
 
-`EntrySpec` (pydantic, `extra='forbid'`) is each cook's recipe-entry schema, so a typo'd key fails the run instead of being silently ignored. `pre_hook` (guard: non-zero skips the item) and `post_hook` (runs after a change) live on every entry; cooks compose intrinsic hooks via `chain_hooks`.
+`EntrySpec` (pydantic, `extra='forbid'`) is each cook's recipe-entry schema, so a typo'd key fails the run instead of being silently ignored. `pre_hook` (guard: non-zero skips the item) and `post_hook` (runs after a change) live on `StateEntrySpec`, the base for state-cook entries — only `StateCook` honors them, so a versioned section keeps the bare `EntrySpec` and a hook declared there fails the lint instead of silently never running. Cooks compose intrinsic hooks via `chain_hooks`.
+
+**Convergence is create/update only.** Cooks drive resources toward their desired *presence*; they never prune. Removing an entry from `recipe.toml` (or uninstalling its target) leaves prior artifacts in place — a stale `.desktop` override, a repo's keyring + `.sources`, a written `/etc` drop-in. Teardown is manual (see the README's eGPU Rollback).
 
 **Privilege model** (`src/harness.py`, `cook_runner`): chef runs as root. A `needs_root` node runs in-process; every other node is run in a **forked child** that calls `become_user()` (drops gid→groups→uid, repoints `HOME`/`USER`/`PATH` at the invoking `SUDO_USER`) and pipes its `CookResult` back as pickle. `--lint` rejects `needs_root` on a subtable header — grant it per leaf entry (least privilege). Forking only happens from the main thread to keep loguru's locks safe.
 

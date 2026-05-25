@@ -59,3 +59,18 @@ def test_section_default_is_folded_before_validation():
     # not trip the unsupported-key check.
     config = {"desktop": {"features": ["Vaapi"], "brave": {"desktop": "/x.desktop"}}}
     assert problems_for(config) == []
+
+
+def test_hook_on_versioned_section_is_rejected():
+    # pre_hook/post_hook live on StateEntrySpec, not the versioned package schema,
+    # so a hook on a package section is an unknown key — fail loud at lint time
+    # rather than be a silent no-op (run_versioned never runs hooks).
+    config = {"apt_pkg": {"packages": ["vim"], "post_hook": "echo done"}}
+    assert any("post_hook" in p for p in problems_for(config))
+
+
+def test_hook_on_state_entry_is_accepted():
+    config = {
+        "file": {"shim": {"path": "/tmp/x", "content": "c", "post_hook": "echo done"}}
+    }
+    assert problems_for(config) == []

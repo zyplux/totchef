@@ -15,19 +15,10 @@ from urllib.request import Request, urlopen
 from loguru import logger
 
 SRC_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SRC_DIR.parent
 RECIPE_TOML = SRC_DIR / "recipe.toml"
 
 # sysexits.h EX_TEMPFAIL: cook -> chef.py signal for recoverable failure.
 SOFT_FAIL_EXIT = 75
-
-
-def get_invoking_user() -> tuple[str, int, int, Path]:
-    sudo_user = os.environ.get("SUDO_USER")
-    if not sudo_user:
-        sys.exit("ERROR: SUDO_USER not set; run via sudo, not as root directly.")
-    pw = pwd.getpwnam(sudo_user)
-    return sudo_user, pw.pw_uid, pw.pw_gid, Path(pw.pw_dir)
 
 
 def become_user() -> None:

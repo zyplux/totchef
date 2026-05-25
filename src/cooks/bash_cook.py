@@ -18,11 +18,11 @@ import subprocess
 
 from loguru import logger
 
-from cook_base import EntrySpec, StateChangeOutcome, StateCook
+from cook_base import StateChangeOutcome, StateCook, StateEntrySpec
 from harness import stream_subprocess
 
 
-class BashEntry(EntrySpec):
+class BashEntry(StateEntrySpec):
     current_state: str | None = None
     desired_state: str = ""
     apply: str

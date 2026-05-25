@@ -19,13 +19,19 @@ class EntrySpec(BaseModel):
     """Base for every cook's recipe-entry schema. `extra='forbid'` rejects any key
     the cook doesn't declare, so a typo'd recipe key fails the run with a clear
     error instead of being silently ignored. A field without a default is a
-    required key; the annotation is the type contract.
-
-    `pre_hook`/`post_hook` live here so every state-cook entry accepts them: chef
-    runs `pre_hook` as a guard (non-zero skips the item) and `post_hook` after a
-    change. A cook with an intrinsic hook composes it with these (see chain_hooks)."""
+    required key; the annotation is the type contract."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class StateEntrySpec(EntrySpec):
+    """Base for a StateCook entry schema. Adds the hook pair every desired-state
+    entry accepts: chef runs `pre_hook` as a guard (non-zero skips the item) and
+    `post_hook` after a change. They live here, not on EntrySpec, because only
+    StateCook honors hooks — a versioned section (cargo, uv, snap, apt_pkg, url)
+    keeps the bare EntrySpec, so `extra='forbid'` rejects a hook there at lint time
+    rather than accepting one the runtime would silently never run. A cook with an
+    intrinsic hook composes it with these (see chain_hooks)."""
 
     pre_hook: str | None = None
     post_hook: str | None = None
@@ -107,8 +113,6 @@ class CookBase:
 
 
 class VersionedCook(CookBase):
-    kind = "versioned"
-
     def list_requested(self) -> list[str]:
         raise NotImplementedError
 
@@ -143,15 +147,13 @@ class PackageListCook(VersionedCook):
         return dict.fromkeys(names)
 
 
-class StateCook[EntryModel: EntrySpec](CookBase):
+class StateCook[EntryModel: StateEntrySpec](CookBase):
     """Desired-state cook over a subtable section. The base validates every entry
-    against `entry_model` into `self.entries` (name -> typed EntrySpec) and serves
-    the two members every such cook shares: `list_resources` and the default
+    against `entry_model` into `self.entries` (name -> typed StateEntrySpec) and
+    serves the two members every such cook shares: `list_resources` and the default
     `get_hooks` (pre_hook/post_hook straight off the entry). Subclasses implement
     the diff — `get_current_state` / `get_desired_state` / `apply_resource` — and
     override `get_hooks` only to compose an intrinsic hook (see chain_hooks)."""
-
-    kind = "state"
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
@@ -179,7 +181,7 @@ class StateCook[EntryModel: EntrySpec](CookBase):
         raise NotImplementedError
 
 
-class FileStateCook[EntryModel: EntrySpec](StateCook[EntryModel]):
+class FileStateCook[EntryModel: StateEntrySpec](StateCook[EntryModel]):
     """A StateCook whose diff is a content hash: current state is the sha256 of the
     file on disk (or "absent"), desired is the sha256 of the rendered bytes (or
     `_unrendered_label`, when there is no base file present to render against).

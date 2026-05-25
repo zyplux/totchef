@@ -17,11 +17,11 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import EntrySpec, StateChangeOutcome, StateCook
+from cook_base import StateChangeOutcome, StateCook, StateEntrySpec
 from harness import fetch_url, run, write_if_changed
 
 
-class AptRepoEntry(EntrySpec):
+class AptRepoEntry(StateEntrySpec):
     key_url: str
     uris: str
     suites: str = "stable"

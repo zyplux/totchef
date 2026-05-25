@@ -1,9 +1,8 @@
 # sys-conf-py
 
 Declarative Ubuntu/Kubuntu Wayland laptop config: apt repos + packages, eGPU
-auto-PRIME at boot, and Brave + VS Code Insiders GPU-acceleration flags;
-re-runnable;
-same script for first-run bootstrap and ongoing upkeep.
+auto-PRIME at boot, and Brave + VS Code Insiders GPU-acceleration flags.
+Re-runnable — the same script serves first-run bootstrap and ongoing upkeep.
 
 ## One-time setup
 

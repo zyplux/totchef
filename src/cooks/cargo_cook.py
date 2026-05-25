@@ -27,23 +27,27 @@ from cook_base import PackageListCook, SyncOutcome
 from harness import find_binary, stream_subprocess
 
 
-def parse_installed_crates() -> dict[str, str]:
-    """Map crate name -> version from `cargo install --list`. Each crate is
+def parse_crate_list(output: str) -> dict[str, str]:
+    """Map crate name -> version from `cargo install --list` output. Each crate is
     announced by a column-0 line `<name> v<version>:`; binaries are indented."""
-    cargo = find_binary("cargo")
-    if not cargo:
-        return {}
-    completed = subprocess.run(
-        [str(cargo), "install", "--list"], capture_output=True, text=True
-    )
     versions: dict[str, str] = {}
-    for line in completed.stdout.splitlines():
+    for line in output.splitlines():
         if not line or line[0].isspace():
             continue
         tokens = line.rstrip(":").split()
         if len(tokens) >= 2 and tokens[1].startswith("v"):
             versions[tokens[0]] = tokens[1].lstrip("v")
     return versions
+
+
+def parse_installed_crates() -> dict[str, str]:
+    cargo = find_binary("cargo")
+    if not cargo:
+        return {}
+    completed = subprocess.run(
+        [str(cargo), "install", "--list"], capture_output=True, text=True
+    )
+    return parse_crate_list(completed.stdout)
 
 
 class CargoCook(PackageListCook):

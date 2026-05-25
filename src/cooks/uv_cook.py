@@ -24,22 +24,26 @@ from cook_base import PackageListCook, SyncOutcome
 from harness import find_binary, stream_subprocess
 
 
+def parse_tool_list(output: str) -> dict[str, str]:
+    """Map tool name -> version from `uv tool list` output. Each tool is announced
+    by a column-0 line `<name> v<version>`; indented `- <bin>` lines are skipped."""
+    versions: dict[str, str] = {}
+    for line in output.splitlines():
+        if not line or line[0].isspace() or line.startswith("-"):
+            continue
+        tokens = line.split()
+        versions[tokens[0]] = tokens[1].lstrip("v") if len(tokens) > 1 else "unknown"
+    return versions
+
+
 def parse_tool_versions(uv: Path) -> dict[str, str]:
-    """Map tool name -> version from `uv tool list`. Each tool is announced by
-    a column-0 line `<name> v<version>`; indented `- <bin>` lines are skipped."""
     completed = subprocess.run(
         [str(uv), "tool", "list"],
         capture_output=True,
         text=True,
         check=True,
     )
-    versions: dict[str, str] = {}
-    for line in completed.stdout.splitlines():
-        if not line or line[0].isspace() or line.startswith("-"):
-            continue
-        tokens = line.split()
-        versions[tokens[0]] = tokens[1].lstrip("v") if len(tokens) > 1 else "unknown"
-    return versions
+    return parse_tool_list(completed.stdout)
 
 
 class UvCook(PackageListCook):
