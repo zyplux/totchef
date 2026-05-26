@@ -173,7 +173,7 @@ def test_run_state_applies_only_drifted_resources():
 
 
 def test_run_state_skips_when_pre_hook_is_not_satisfied(monkeypatch):
-    monkeypatch.setattr(cook_runner, "run_pre_hook", lambda snippet, tag: False)
+    monkeypatch.setattr(cook_runner, "run_pre_hook", lambda snippet: False)
     cook = FakeState(
         current={"x": "absent"},
         desired={"x": "present"},
@@ -186,7 +186,7 @@ def test_run_state_skips_when_pre_hook_is_not_satisfied(monkeypatch):
 
 
 def test_run_state_post_hook_failure_downgrades_to_soft_fail(monkeypatch):
-    monkeypatch.setattr(cook_runner, "run_post_hook", lambda snippet, tag: "soft_fail")
+    monkeypatch.setattr(cook_runner, "run_post_hook", lambda snippet: "soft_fail")
     cook = FakeState(
         current={"x": "absent"},
         desired={"x": "present"},
@@ -214,7 +214,7 @@ def test_run_state_apply_hard_fail_is_reported():
 def test_run_state_post_hook_is_skipped_when_apply_made_no_change(monkeypatch):
     ran_post = False
 
-    def record(snippet, tag):
+    def record(snippet):
         nonlocal ran_post
         ran_post = True
         return "ok"

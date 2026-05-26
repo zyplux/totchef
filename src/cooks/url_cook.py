@@ -29,29 +29,28 @@ class UrlEntry(EntrySpec):
     update_guard: str | None = None
 
 
-def run_installer(url: str, args: list[str], tag: str, note: str) -> None:
-    stream_subprocess(["bash", "-s", "--", *args], tag, note=note, stdin=fetch_url(url))
+def run_installer(url: str, args: list[str], note: str) -> None:
+    stream_subprocess(["bash", "-s", "--", *args], note=note, stdin=fetch_url(url))
 
 
-def update_existing(entry: UrlEntry, bin_path: Path, tag: str) -> None:
+def update_existing(entry: UrlEntry, bin_path: Path) -> None:
     action = entry.update_action
     if action is None:
-        logger.info(f"{tag} No update_action; leaving {bin_path} as-is")
+        logger.info(f"No update_action; leaving {bin_path} as-is")
         return
     if guard := entry.update_guard:
         shell = f"PATH={shlex.quote(str(bin_path.parent))}:$PATH; {guard}"
-        stream_subprocess(["bash", "-c", shell], tag, note=f"Update guard: {guard}")
+        stream_subprocess(["bash", "-c", shell], note=f"Update guard: {guard}")
     if action == RERUN_INSTALLER:
-        run_installer(entry.url, entry.args, tag, note=f"Updating from {entry.url}")
+        run_installer(entry.url, entry.args, note=f"Updating from {entry.url}")
     elif isinstance(action, list) and action:
         stream_subprocess(
             [str(bin_path), *action],
-            tag,
             note=f"Updating via `{bin_path.name} {' '.join(action)}`",
         )
     else:
         raise ValueError(
-            f"{tag} unrecognized update_action {action!r} "
+            f"unrecognized update_action {action!r} "
             f"(expected an arg list, {RERUN_INSTALLER!r}, or absent)"
         )
 
@@ -84,24 +83,21 @@ class UrlCook(VersionedCook):
             return SyncOutcome("ok")
 
         [(name, entry)] = self.installs.items()
-        tag = f"[{name}]"
         bin_name = entry.bin or name
 
         if (existing := find_binary(bin_name)) is None:
             try:
-                run_installer(
-                    entry.url, entry.args, tag, note=f"Installing {entry.url}"
-                )
+                run_installer(entry.url, entry.args, note=f"Installing {entry.url}")
             except Exception as exc:
                 return SyncOutcome("hard_fail", f"{name} install failed: {exc}")
             if found := find_binary(bin_name):
-                logger.info(f"{tag} Installed: {found}")
+                logger.info(f"Installed: {found}")
             else:
-                logger.warning(f"{tag} {bin_name} not found after install")
+                logger.warning(f"{bin_name} not found after install")
             return SyncOutcome("ok")
 
         try:
-            update_existing(entry, existing, tag)
+            update_existing(entry, existing)
         except subprocess.CalledProcessError as exc:
             return SyncOutcome(
                 "soft_fail", f"{name} update failed (still installed): {exc}"

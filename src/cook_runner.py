@@ -15,6 +15,7 @@ from loguru import logger
 
 from cook_base import CookResult, ReportRow, StateCook, Status, VersionedCook
 from harness import become_user, stream_subprocess
+from logs import cook_context
 from recipe_graph import (
     Node,
     build_node_graph,
@@ -47,24 +48,24 @@ def format_state(token: str) -> str:
     return "present" if CONTENT_DIGEST.fullmatch(token) else token
 
 
-def run_pre_hook(snippet: str, tag: str) -> bool:
+def run_pre_hook(snippet: str) -> bool:
     """A `pre_hook` is a guard: zero exit -> proceed; non-zero -> skip this item
     (a benign skip, e.g. "browser is running", not a failure)."""
     try:
-        stream_subprocess(["bash", "-c", snippet], tag, note=f"pre_hook: {snippet}")
+        stream_subprocess(["bash", "-c", snippet], note=f"pre_hook: {snippet}")
         return True
     except Exception:
-        logger.info(f"{tag} pre_hook not satisfied; skipping")
+        logger.info("pre_hook not satisfied; skipping")
         return False
 
 
-def run_post_hook(snippet: str, tag: str) -> Status:
+def run_post_hook(snippet: str) -> Status:
     """A `post_hook` runs after a successful change; non-zero -> soft failure."""
     try:
-        stream_subprocess(["bash", "-c", snippet], tag, note=f"post_hook: {snippet}")
+        stream_subprocess(["bash", "-c", snippet], note=f"post_hook: {snippet}")
         return "ok"
     except Exception as exc:
-        logger.warning(f"{tag} post_hook failed: {exc}")
+        logger.warning(f"post_hook failed: {exc}")
         return "soft_fail"
 
 
@@ -171,20 +172,19 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
             rows.append(ReportRow(name, cook.manager, before, "—", "unchanged", False))
             continue
 
-        tag = f"[{section}:{name}]"
         pre_hook, post_hook = cook.get_hooks(name)
-        if pre_hook and not run_pre_hook(pre_hook, tag):
+        if pre_hook and not run_pre_hook(pre_hook):
             rows.append(ReportRow(name, cook.manager, before, "—", "skipped", False))
             continue
 
         outcome = cook.apply_resource(name)
         if outcome.message:
             (logger.error if outcome.status == "hard_fail" else logger.info)(
-                f"{tag} {outcome.message}"
+                outcome.message
             )
         status: Status = outcome.status
         if outcome.status == "ok" and outcome.changed and post_hook:
-            if run_post_hook(post_hook, tag) == "soft_fail":
+            if run_post_hook(post_hook) == "soft_fail":
                 status = "soft_fail"
 
         if status == "hard_fail":
@@ -215,10 +215,11 @@ def run_cook(node: Node, config: dict, dry_run: bool) -> CookResult:
 
 
 def run_cook_guarded(node: Node, config: dict, dry_run: bool) -> CookResult:
-    try:
-        return run_cook(node, config, dry_run)
-    except Exception:
-        return CookResult(node.id, "hard_fail", [], traceback.format_exc())
+    with cook_context(node.id):
+        try:
+            return run_cook(node, config, dry_run)
+        except Exception:
+            return CookResult(node.id, "hard_fail", [], traceback.format_exc())
 
 
 def fork_user_cook(node: Node, config: dict, dry_run: bool) -> tuple[int, int]:

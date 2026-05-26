@@ -49,18 +49,13 @@ class BashCook(StateCook[BashEntry]):
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
         entry = self.entries[name]
-        tag = f"[{name}]"
         try:
-            stream_subprocess(
-                ["bash", "-c", entry.apply],
-                tag,
-                note="apply",
-            )
+            stream_subprocess(["bash", "-c", entry.apply], note="apply")
         except subprocess.CalledProcessError as exc:
             return StateChangeOutcome(
                 changed=False,
                 status="hard_fail",
-                message=f"{tag} apply failed: {exc}",
+                message=f"apply failed: {exc}",
             )
-        logger.info(f"{tag} applied")
+        logger.info("applied")
         return StateChangeOutcome(changed=True)

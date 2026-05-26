@@ -23,6 +23,14 @@ venvPath = "."
 venv = ".venv"
 extraPaths = ["src"]
 
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    ".venv",
+    "reference_clones",
+]
+
 [tool.vulture]
 paths = ["src"]
 # Cooks are imported by name convention (recipe_graph.load_cook_class -> importlib),

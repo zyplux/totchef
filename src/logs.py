@@ -15,7 +15,8 @@ import pwd
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TextIO
@@ -26,7 +27,12 @@ from toon_format import encode
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = REPO_ROOT / "logs"
 
-LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <22} {level: <7} {message}"
+# The runner column names who is speaking: "chef" for the orchestrator's own
+# lines, the node id (e.g. url.bun, apt_pkg) while a cook runs — see cook_context.
+# Width fits the longest node id so the level/message columns stay aligned.
+DEFAULT_RUNNER = Path(sys.argv[0]).stem
+
+LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <28} {level: <7} {message}"
 
 SHARED_LOG_ENV = "SYS_CONF_PY_LOG_FILE"
 
@@ -51,8 +57,24 @@ LINE_SINK: Callable[[str], None] | None = None
 
 # Configured at import so pre-sudo messages get timestamped too.
 logger.remove()
-logger.configure(extra={"runner": Path(sys.argv[0]).stem})
+logger.configure(extra={"runner": DEFAULT_RUNNER})
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
+
+
+@contextmanager
+def cook_context(runner: str) -> Generator[None]:
+    """Label every log line emitted while a cook runs with its node id, then
+    restore the default ("chef") runner. Uses logger.configure (global core extra)
+    rather than logger.contextualize so the label also reaches worker threads a
+    cook may spawn — contextvars don't propagate into new threads, but core extra
+    does. Cooks never run concurrently in one process (root cooks are sequential;
+    user cooks are each a forked child with its own logger), so the global switch
+    can't be clobbered mid-run."""
+    logger.configure(extra={"runner": runner})
+    try:
+        yield
+    finally:
+        logger.configure(extra={"runner": DEFAULT_RUNNER})
 
 
 def write_log(text: str) -> None:
