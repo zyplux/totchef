@@ -2,7 +2,7 @@
 
 import pytest
 
-import harness
+from totchef import harness
 
 
 def test_become_user_is_a_noop_when_already_unprivileged(monkeypatch):

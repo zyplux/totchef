@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec
-from harness import write_if_changed
+from totchef.cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec
+from totchef.harness import write_if_changed
 
 
 class SettingsEntry(StateEntrySpec):

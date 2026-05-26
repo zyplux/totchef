@@ -8,8 +8,8 @@ from typing import Literal
 
 from loguru import logger
 
-from cook_base import EntrySpec, SyncOutcome, VersionedCook
-from harness import fetch_url, find_binary, stream_subprocess
+from totchef.cook_base import EntrySpec, SyncOutcome, VersionedCook
+from totchef.harness import fetch_url, find_binary, stream_subprocess
 
 RERUN_INSTALLER = "rerun-installer"
 

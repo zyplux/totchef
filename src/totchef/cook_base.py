@@ -1,4 +1,4 @@
-"""Shared contract for sys-conf-py cooks: a cook probes and acts but holds no diff logic (chef owns the diff); VersionedCook covers versioned packages, StateCook desired-state resources. See CLAUDE.md."""
+"""Shared contract for totchef cooks: a cook probes and acts but holds no diff logic (chef owns the diff); VersionedCook covers versioned packages, StateCook desired-state resources. See CLAUDE.md."""
 
 import hashlib
 from dataclasses import dataclass, field

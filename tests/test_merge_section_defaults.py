@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from recipe_graph import merge_section_defaults
+from totchef.recipe_graph import merge_section_defaults
 
 FIXTURE_RECIPE = Path(__file__).parent / "fixtures" / "recipe.toml"
 

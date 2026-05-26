@@ -6,9 +6,9 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
-from cook_base import PackageListCook, SyncOutcome
-from harness import stream_subprocess
-from logs import log_toon
+from totchef.cook_base import PackageListCook, SyncOutcome
+from totchef.harness import stream_subprocess
+from totchef.logs import log_toon
 
 TRUSTED_GPGD = Path("/etc/apt/trusted.gpg.d")
 

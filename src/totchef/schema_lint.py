@@ -5,7 +5,7 @@ from graphlib import CycleError, TopologicalSorter
 
 from pydantic import ValidationError
 
-from recipe_graph import (
+from totchef.recipe_graph import (
     Node,
     build_node_graph,
     build_nodes,

@@ -2,7 +2,7 @@
 
 from functools import partial
 
-from cooks.desktop_cook import rewrite_exec_line
+from totchef.cooks.desktop_cook import rewrite_exec_line
 
 
 def test_inserts_env_switches_and_features_before_field_code():

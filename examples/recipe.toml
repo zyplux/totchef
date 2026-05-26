@@ -1,0 +1,243 @@
+[url.bun]
+url = "https://bun.sh/install"
+update_action = ["upgrade"]
+
+[url.uv]
+url = "https://astral.sh/uv/install.sh"
+update_action = ["self", "update"]
+
+[url.claude]
+url = "https://claude.ai/install.sh"
+update_action = ["update"]
+
+[url.rustup]
+url = "https://sh.rustup.rs"
+args = ["-y"]
+update_action = ["self", "update"]
+
+[url.herdr]
+url = "https://herdr.dev/install.sh"
+update_action = ["update"]
+update_guard = "command -v herdr >/dev/null || exit 0; herdr server stop || true; for _ in {1..30}; do herdr status server | grep -q 'not running' && exit 0; sleep 0.1; done; exit 1"
+
+[url.agy]
+url = "https://antigravity.google/cli/install.sh"
+
+[cargo]
+depends_on = ["url.rustup"]
+packages = [
+    "cargo-binstall",
+    "cargo-update",
+    "just",
+    "just-lsp",
+    "rumdl",
+]
+
+[uv]
+depends_on = ["url.uv"]
+packages = [
+    "ruff",
+]
+
+[file.write_if_changed]
+needs_root = true
+source = "write-if-changed.py"
+path = "/usr/local/bin/write-if-changed"
+mode = "0755"
+
+[file.trusted_gpgd_hardening]
+needs_root = true
+path = "/etc/apt/apt.conf.d/99-trusted-gpgd-autounlock"
+mode = "0644"
+content = """
+// Lift trusted.gpg.d's immutable bit around each dpkg run, then restore it.
+DPkg::Pre-Invoke  { "/usr/bin/chattr -i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
+DPkg::Post-Invoke { "/usr/bin/chattr +i /etc/apt/trusted.gpg.d/ 2>/dev/null || true"; };
+"""
+post_hook = "lsattr -d /etc/apt/trusted.gpg.d/ 2>/dev/null | awk '{print $1}' | grep -q i || chattr +i /etc/apt/trusted.gpg.d/"
+
+[file.grub_deep_sleep]
+needs_root = true
+path = "/etc/default/grub.d/99-mem-sleep-deep.cfg"
+mode = "0644"
+content = """
+# Force deep S3 suspend (s2idle crash mitigation; docs/issues/sleep-crash/sleep-crash.md).
+GRUB_CMDLINE_LINUX_DEFAULT="$(echo "$GRUB_CMDLINE_LINUX_DEFAULT" | sed -E 's/ *mem_sleep_default=[^ "]*//g') mem_sleep_default=deep"
+"""
+post_hook = "update-grub"
+
+[file.egpu_switch]
+needs_root = true
+source = "egpu-prime-switch.py"
+path = "/usr/local/sbin/egpu-prime-switch"
+mode = "0755"
+depends_on = ["apt_pkg"]
+
+[file.egpu_service]
+needs_root = true
+source = "egpu-prime.service"
+path = "/etc/systemd/system/egpu-prime.service"
+mode = "0644"
+depends_on = ["apt_pkg"]
+post_hook = "systemctl daemon-reload; systemctl enable egpu-prime.service"
+
+[file.nvidia_power]
+needs_root = true
+path = "/etc/modprobe.d/nvidia-power.conf"
+mode = "0644"
+depends_on = ["apt_pkg"]
+content = """
+options nvidia NVreg_PreserveVideoMemoryAllocations=1
+options nvidia NVreg_DynamicPowerManagement=0x00
+options nvidia NVreg_EnableS0ixPowerManagement=0
+"""
+post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service 2>/dev/null || true; update-initramfs -u"
+
+[bash.ubuntu_pin]
+needs_root = true
+apply = '''
+. /etc/os-release
+rel="${VERSION_CODENAME:-$UBUNTU_CODENAME}"
+[ -n "$rel" ] || { echo "ERROR: could not determine release codename" >&2; exit 1; }
+cat <<EOF | write-if-changed /etc/apt/preferences.d/ubuntu-archives.pref
+# Prefer Ubuntu archives (priority 900) over third-party repos (default 500).
+Package: *
+Pin: release o=Ubuntu, a=$rel
+Pin-Priority: 900
+
+Package: *
+Pin: release o=Ubuntu, a=$rel-updates
+Pin-Priority: 900
+
+Package: *
+Pin: release o=Ubuntu, a=$rel-security
+Pin-Priority: 900
+EOF
+'''
+current_state = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
+desired_state = "present"
+depends_on = ["file.write_if_changed"]
+
+[bash.code_insiders_debconf]
+needs_root = true
+apply = "echo 'code-insiders code-insiders/add-microsoft-repo boolean false' | debconf-set-selections"
+current_state = "debconf-show code-insiders 2>/dev/null | grep -q 'add-microsoft-repo: false' && echo set || echo unset"
+desired_state = "set"
+
+[bash.apt_prereqs]
+needs_root = true
+apply = '''
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends curl gnupg ca-certificates nala
+'''
+current_state = "command -v nala >/dev/null && echo present || echo absent"
+desired_state = "present"
+
+[apt_repo]
+depends_on = ["bash.apt_prereqs"]
+
+[apt_repo."debian.griffo.io"]
+key_url = "https://debian.griffo.io/EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc"
+uris = "https://debian.griffo.io/apt"
+suites = "{release}"
+
+[apt_repo.brave-browser]
+key_url = "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+uris = "https://brave-browser-apt-release.s3.brave.com"
+
+[apt_repo.vscode]
+key_url = "https://packages.microsoft.com/keys/microsoft.asc"
+uris = "https://packages.microsoft.com/repos/code"
+
+[apt_repo.github-cli]
+key_url = "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+uris = "https://cli.github.com/packages"
+
+[apt_repo.signal-desktop]
+key_url = "https://updates.signal.org/desktop/apt/keys.asc"
+uris = "https://updates.signal.org/desktop/apt"
+suites = "xenial"
+
+[apt_pkg]
+depends_on = [
+    "apt_repo",
+    "bash.ubuntu_pin",
+    "bash.code_insiders_debconf",
+]
+packages = [
+    "just",
+    "ghostty",
+    "nala",
+    "vainfo",
+    "linux-crashdump",
+    "nvidia-driver-580-open",
+    "nvidia-vaapi-driver",
+    "zed",
+    "brave-browser",
+    "code",
+    "code-insiders",
+    "gh",
+    "signal-desktop",
+]
+
+[snap]
+packages = [
+    "firefox",
+    "chromium",
+]
+
+[desktop]
+depends_on = ["apt_pkg"]
+features = [
+    "VaapiOnNvidiaGPUs",
+    "AcceleratedVideoDecodeLinuxGL",
+    "AcceleratedVideoDecodeLinuxZeroCopyGL",
+    "WaylandLinuxDrmSyncobj",
+]
+
+[desktop.brave]
+desktop = "/usr/share/applications/brave-browser.desktop"
+features = ["AcceleratedVideoEncoder", "WebRTCPipeWireCapturer"]
+
+[desktop.code]
+desktop = "/usr/share/applications/code.desktop"
+
+[desktop.code_insiders]
+desktop = "/usr/share/applications/code-insiders.desktop"
+
+[chromium_flags]
+depends_on = ["apt_pkg"]
+features = [
+    "VaapiOnNvidiaGPUs",
+    "AcceleratedVideoDecodeLinuxGL",
+    "AcceleratedVideoDecodeLinuxZeroCopyGL",
+    "WaylandLinuxDrmSyncobj",
+]
+
+[chromium_flags.brave]
+local_state = ".config/BraveSoftware/Brave-Browser/Local State"
+local_state_flags = []
+
+[chromium_flags.code]
+argv_json = ".vscode/argv.json"
+
+[chromium_flags.code.argv]
+"ozone-platform-hint"      = "auto"
+"enable-gpu-rasterization" = true
+"ignore-gpu-blocklist"     = true
+
+[chromium_flags.code_insiders]
+argv_json = ".vscode-insiders/argv.json"
+
+[chromium_flags.code_insiders.argv]
+"ozone-platform-hint"      = "auto"
+"enable-gpu-rasterization" = true
+"ignore-gpu-blocklist"     = true
+
+[settings]
+depends_on = ["apt_pkg"]
+
+[settings.claude_code]
+settings_json = ".claude/settings.json"
+settings_env = { ENABLE_CLAUDEAI_MCP_SERVERS = "false" }

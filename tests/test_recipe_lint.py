@@ -1,7 +1,7 @@
 import pytest
 
-from recipe_graph import build_nodes
-from schema_lint import (
+from totchef.recipe_graph import build_nodes
+from totchef.schema_lint import (
     rule_dependencies_acyclic,
     rule_root_only_on_leaves,
     rule_sections_resolve_to_cooks,
@@ -22,7 +22,7 @@ def test_known_section_resolves_to_a_cook():
 
 def test_unknown_section_has_no_cook():
     config = {"made_up": {"needs_root": True, "packages": []}}
-    with pytest.raises(SystemExit, match="no cooks/made_up"):
+    with pytest.raises(SystemExit, match="no cook registered"):
         rule_sections_resolve_to_cooks(build_nodes(config))
 
 

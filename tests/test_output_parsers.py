@@ -1,10 +1,10 @@
 """Pure parsers over external CLI output, pinning the column/format assumptions that break silently (a mis-read version, not a crash) when a tool reformats."""
 
-from cooks.apt_pkg_root_cook import parse_policy
-from cooks.cargo_cook import parse_crate_list, parse_crates_latest
-from cooks.snap_root_cook import parse_refresh_list, parse_snap_list
-from cooks.url_cook import parse_version
-from cooks.uv_cook import parse_pypi_latest, parse_tool_list
+from totchef.cooks.apt_pkg_root_cook import parse_policy
+from totchef.cooks.cargo_cook import parse_crate_list, parse_crates_latest
+from totchef.cooks.snap_root_cook import parse_refresh_list, parse_snap_list
+from totchef.cooks.url_cook import parse_version
+from totchef.cooks.uv_cook import parse_pypi_latest, parse_tool_list
 
 # --- parse_snap_list ---
 

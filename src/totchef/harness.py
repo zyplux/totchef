@@ -13,10 +13,10 @@ from urllib.request import Request, urlopen
 
 from loguru import logger
 
-SRC_DIR = Path(__file__).resolve().parent
-RECIPE_TOML = SRC_DIR / "recipe.toml"
+PACKAGE_DIR = Path(__file__).resolve().parent
+FILES_DIR = PACKAGE_DIR / "files"
 
-# sysexits.h EX_TEMPFAIL: cook -> chef.py signal for recoverable failure.
+# sysexits.h EX_TEMPFAIL: cook -> chef signal for recoverable failure.
 SOFT_FAIL_EXIT = 75
 
 
@@ -132,7 +132,7 @@ def find_binary(name: str) -> Path | None:
     return None
 
 
-USER_AGENT = "sys-conf-py"
+USER_AGENT = "totchef"
 
 
 def fetch_url(url: str) -> bytes:
