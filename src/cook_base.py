@@ -38,10 +38,7 @@ class StateEntrySpec(EntrySpec):
 
 
 def chain_hooks(*commands: str | None) -> str | None:
-    """Join the present shell commands with `&&` (all must succeed), or None when
-    there are none — lets a cook's intrinsic hook compose with a recipe-declared
-    one. For a `pre_hook` guard the `&&` is the right semantics: any non-zero link
-    short-circuits and chef skips the item."""
+    """Join present shell commands with `&&` (None if none) so an intrinsic hook composes with a recipe-declared one; a non-zero link short-circuits a pre_hook guard."""
     present = [command for command in commands if command]
     return " && ".join(present) if present else None
 
@@ -111,8 +108,17 @@ class CookBase:
     def __init__(self, section: dict) -> None:
         self.section = section
 
+    @property
+    def unit_count(self) -> int:
+        """Discrete units of work this cook represents — one by default, weighting its scheduler pull; a versioned cook overrides with its package count."""
+        return 1
+
 
 class VersionedCook(CookBase):
+    @property
+    def unit_count(self) -> int:
+        return len(self.list_requested())
+
     def list_requested(self) -> list[str]:
         raise NotImplementedError
 
@@ -159,10 +165,7 @@ class StateCook[EntryModel: StateEntrySpec](CookBase):
         super().__init__(section)
         model = self.entry_model
         assert model is not None, f"{type(self).__name__} must set entry_model"
-        self.entries: dict[str, EntryModel] = {
-            name: cast("EntryModel", model.model_validate(raw))
-            for name, raw in section.items()
-        }
+        self.entries: dict[str, EntryModel] = {name: cast("EntryModel", model.model_validate(raw)) for name, raw in section.items()}
 
     def list_resources(self) -> list[str]:
         return list(self.entries)
@@ -202,20 +205,12 @@ class FileStateCook[EntryModel: StateEntrySpec](StateCook[EntryModel]):
         states: dict[str, str] = {}
         for name in self.entries:
             path = self._target_path(name)
-            states[name] = (
-                hashlib.sha256(path.read_bytes()).hexdigest()
-                if path.exists()
-                else "absent"
-            )
+            states[name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "absent"
         return states
 
     def get_desired_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name in self.entries:
             content = self._render(name)
-            states[name] = (
-                hashlib.sha256(content).hexdigest()
-                if content is not None
-                else self._unrendered_label
-            )
+            states[name] = hashlib.sha256(content).hexdigest() if content is not None else self._unrendered_label
         return states

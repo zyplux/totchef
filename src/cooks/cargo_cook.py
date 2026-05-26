@@ -28,8 +28,7 @@ from harness import find_binary, stream_subprocess
 
 
 def parse_crate_list(output: str) -> dict[str, str]:
-    """Map crate name -> version from `cargo install --list` output. Each crate is
-    announced by a column-0 line `<name> v<version>:`; binaries are indented."""
+    """Map crate name -> version from `cargo install --list`: each crate is a column-0 `<name> v<version>:` line, binaries are indented."""
     versions: dict[str, str] = {}
     for line in output.splitlines():
         if not line or line[0].isspace():
@@ -44,9 +43,7 @@ def parse_installed_crates() -> dict[str, str]:
     cargo = find_binary("cargo")
     if not cargo:
         return {}
-    completed = subprocess.run(
-        [str(cargo), "install", "--list"], capture_output=True, text=True
-    )
+    completed = subprocess.run([str(cargo), "install", "--list"], capture_output=True, text=True)
     return parse_crate_list(completed.stdout)
 
 
@@ -62,10 +59,7 @@ class CargoCook(PackageListCook):
         cargo = find_binary("cargo")
         if not cargo:
             return None
-        logger.info(
-            "cargo-binstall missing — bootstrapping via `cargo install` "
-            "(slow source compile; happens once per fresh system)"
-        )
+        logger.info("cargo-binstall missing — bootstrapping via `cargo install` (slow source compile; happens once per fresh system)")
         stream_subprocess([str(cargo), "install", "cargo-binstall"])
         return find_binary("cargo-binstall")
 
@@ -83,12 +77,9 @@ class CargoCook(PackageListCook):
         if not binstall:
             return SyncOutcome(
                 "hard_fail",
-                "cargo-binstall is not on PATH or in ~/.cargo/bin after bootstrap. "
-                "Check cargo's install root.",
+                "cargo-binstall is not on PATH or in ~/.cargo/bin after bootstrap. Check cargo's install root.",
             )
 
-        logger.info(
-            f"Installing/upgrading {len(targets)} crate(s): " + ", ".join(targets)
-        )
+        logger.info(f"Installing/upgrading {len(targets)} crate(s): " + ", ".join(targets))
         stream_subprocess([str(binstall), "--no-confirm", *targets])
         return SyncOutcome("ok")

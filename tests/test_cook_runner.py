@@ -3,15 +3,33 @@ turn a cook's probes into the install/upgrade/unchanged/missing/failed verdict a
 drive the pre/apply/post lifecycle. Fakes stand in for real cooks so the
 classification logic is exercised without a package manager or the filesystem."""
 
+import contextlib
+import types
+
 import cook_runner
-from cook_base import StateChangeOutcome, StateCook, SyncOutcome, VersionedCook
+from cook_base import (
+    CookBase,
+    CookResult,
+    StateChangeOutcome,
+    StateCook,
+    SyncOutcome,
+    VersionedCook,
+)
 from cook_runner import (
+    build_dependents,
+    build_reach,
+    build_weights,
+    format_queueing,
     format_state,
+    format_unlocked,
     format_version,
+    log_completion,
     pick_worst_status,
+    run_cook_guarded,
     run_state,
     run_versioned,
 )
+from recipe_graph import Node, build_nodes
 
 HEX = "a" * 64
 HEX2 = "b" * 64
@@ -155,9 +173,7 @@ def test_run_state_dry_run_flags_changes_and_stale_digests():
     assert (rows["add"].action, rows["add"].changed) == ("would apply", True)
     assert (rows["same"].action, rows["same"].changed) == ("ok", False)
     assert rows["edit"].action == "would apply"
-    assert (
-        rows["edit"].installed == "stale"
-    )  # a changing content digest reads as 'stale'
+    assert rows["edit"].installed == "stale"  # a changing content digest reads as 'stale'
     assert cook.applied == []  # dry run never applies
 
 
@@ -173,7 +189,7 @@ def test_run_state_applies_only_drifted_resources():
 
 
 def test_run_state_skips_when_pre_hook_is_not_satisfied(monkeypatch):
-    monkeypatch.setattr(cook_runner, "run_pre_hook", lambda snippet, tag: False)
+    monkeypatch.setattr(cook_runner, "run_pre_hook", lambda snippet: False)
     cook = FakeState(
         current={"x": "absent"},
         desired={"x": "present"},
@@ -186,7 +202,7 @@ def test_run_state_skips_when_pre_hook_is_not_satisfied(monkeypatch):
 
 
 def test_run_state_post_hook_failure_downgrades_to_soft_fail(monkeypatch):
-    monkeypatch.setattr(cook_runner, "run_post_hook", lambda snippet, tag: "soft_fail")
+    monkeypatch.setattr(cook_runner, "run_post_hook", lambda snippet: "soft_fail")
     cook = FakeState(
         current={"x": "absent"},
         desired={"x": "present"},
@@ -202,9 +218,7 @@ def test_run_state_apply_hard_fail_is_reported():
     cook = FakeState(
         current={"x": "absent"},
         desired={"x": "present"},
-        outcomes={
-            "x": StateChangeOutcome(changed=False, status="hard_fail", message="nope")
-        },
+        outcomes={"x": StateChangeOutcome(changed=False, status="hard_fail", message="nope")},
     )
     result = run_state(cook, "sec", dry_run=False)
     assert result.rows[0].action == "failed"
@@ -214,7 +228,7 @@ def test_run_state_apply_hard_fail_is_reported():
 def test_run_state_post_hook_is_skipped_when_apply_made_no_change(monkeypatch):
     ran_post = False
 
-    def record(snippet, tag):
+    def record(snippet):
         nonlocal ran_post
         ran_post = True
         return "ok"
@@ -230,3 +244,240 @@ def test_run_state_post_hook_is_skipped_when_apply_made_no_change(monkeypatch):
     result = run_state(cook, "sec", dry_run=False)
     assert ran_post is False
     assert result.rows[0].action == "unchanged"
+
+
+# --- run_cook_guarded start line ---
+
+
+@contextlib.contextmanager
+def null_context(_runner):
+    yield
+
+
+def make_node(node_id, *, needs_root, depends_on):
+    return Node(node_id, node_id.split(".")[0], None, needs_root, depends_on)
+
+
+def recording_logger(monkeypatch):
+    """Capture logged lines and neuter cook_context."""
+    lines: list[str] = []
+    logger = types.SimpleNamespace(info=lines.append, warning=lines.append, error=lines.append)
+    monkeypatch.setattr(cook_runner, "logger", logger)
+    monkeypatch.setattr(cook_runner, "cook_context", null_context)
+    return lines
+
+
+def capture_start_line(node, monkeypatch, dependents=(), reach=None, weights=None, dry_run=False):
+    """Return run_cook_guarded's start line with euid/user and the cook body stubbed."""
+    lines = recording_logger(monkeypatch)
+    monkeypatch.setattr(cook_runner.os, "geteuid", lambda: 4242)
+    monkeypatch.setattr(cook_runner.pwd, "getpwuid", lambda _uid: types.SimpleNamespace(pw_name="alice"))
+    monkeypatch.setattr(cook_runner, "run_cook", lambda n, _c, _d: CookResult(n.id, "ok", []))
+    run_cook_guarded(node, {}, dry_run, dependents=dependents, reach=reach, weights=weights)
+    return lines[0]
+
+
+def test_start_line_appends_depends_on_for_user_node(monkeypatch):
+    node = make_node("url.rustup", needs_root=False, depends_on=("apt_pkg", "bash.prereqs"))
+    assert capture_start_line(node, monkeypatch) == ("started as alice; depends_on apt_pkg, bash.prereqs")
+
+
+def test_start_line_omits_depends_on_for_root_node(monkeypatch):
+    node = make_node("apt_repo", needs_root=True, depends_on=("apt_pkg",))
+    assert capture_start_line(node, monkeypatch) == "started as alice"
+
+
+def test_start_line_appends_queueing_dependants(monkeypatch):
+    node = make_node("apt_pkg", needs_root=False, depends_on=())
+    line = capture_start_line(node, monkeypatch, dependents=("url.rustup", "cargo"))
+    assert line == "started as alice; queueing: url.rustup, cargo"
+
+
+def test_start_line_combines_depends_on_and_queueing(monkeypatch):
+    node = make_node("bash.step", needs_root=False, depends_on=("apt_pkg",))
+    line = capture_start_line(node, monkeypatch, dependents=("snap",))
+    assert line == "started as alice; depends_on apt_pkg; queueing: snap"
+
+
+def test_start_line_drops_username_in_dry_run(monkeypatch):
+    node = make_node("url.bun", needs_root=False, depends_on=())
+    assert capture_start_line(node, monkeypatch, dry_run=True) == "started"
+
+
+def test_start_line_queueing_annotates_each_dependant_with_reach(monkeypatch):
+    node = make_node("bash.apt_prereqs", needs_root=False, depends_on=())
+    line = capture_start_line(
+        node,
+        monkeypatch,
+        dependents=("apt_pkg", "desktop.brave"),
+        reach={"apt_pkg": 40, "desktop.brave": 1},
+    )
+    assert line == "started as alice; queueing: apt_pkg (40), desktop.brave"
+
+
+def test_start_line_queueing_leads_with_deduplicated_combined_weight(monkeypatch):
+    node = make_node("bash.apt_prereqs", needs_root=False, depends_on=())
+    line = capture_start_line(
+        node,
+        monkeypatch,
+        dependents=("apt_repo.brave", "apt_repo.vscode"),
+        reach={"bash.apt_prereqs": 29, "apt_repo.brave": 24, "apt_repo.vscode": 24},
+        weights={"bash.apt_prereqs": 1},
+    )
+    assert line == ("started as alice; queueing (28) : apt_repo.brave (24), apt_repo.vscode (24)")
+
+
+# --- log_completion (parent-side completion line) ---
+
+
+def test_completion_success_with_no_dependants_is_bare(monkeypatch):
+    lines = recording_logger(monkeypatch)
+    log_completion("cargo", CookResult("cargo", "ok", []), (), {}, {})
+    assert lines[0] == "completed with success"
+
+
+def test_completion_failure_blocks_dependants(monkeypatch):
+    lines = recording_logger(monkeypatch)
+    log_completion(
+        "apt_pkg",
+        CookResult("apt_pkg", "hard_fail", [], "boom"),
+        ("cargo",),
+        {"cargo": 1},
+        {"cargo": 1},
+    )
+    assert lines[0] == "completed with failure: boom; blocked: cargo"
+
+
+def test_completion_success_carries_unlock_tally(monkeypatch):
+    lines = recording_logger(monkeypatch)
+    log_completion(
+        "bash.ubuntu_pin",
+        CookResult("bash.ubuntu_pin", "ok", []),
+        ("apt_pkg",),
+        {"apt_pkg": 7},
+        {"apt_pkg": 7},
+    )
+    assert lines[0] == "completed with success; unlocked: apt_pkg (7/7)"
+
+
+# --- format_unlocked (shared-dependency tally) ---
+
+
+def test_format_unlocked_omits_count_for_single_blocker_dependant():
+    suffix = format_unlocked(
+        ("desktop.brave", "desktop.code"),
+        {"desktop.brave": 1, "desktop.code": 1},
+        {"desktop.brave": 1, "desktop.code": 1},
+    )
+    assert suffix == "; unlocked: desktop.brave, desktop.code"
+
+
+def test_format_unlocked_counts_blockers_of_a_shared_dependant():
+    assert format_unlocked(("apt_pkg",), {"apt_pkg": 3}, {"apt_pkg": 7}) == ("; unlocked: apt_pkg (3/7)")
+
+
+def test_format_unlocked_mixes_counted_and_bare_dependants():
+    suffix = format_unlocked(
+        ("apt_pkg", "desktop.brave"),
+        {"apt_pkg": 2, "desktop.brave": 1},
+        {"apt_pkg": 7, "desktop.brave": 1},
+    )
+    assert suffix == "; unlocked: apt_pkg (2/7), desktop.brave"
+
+
+def test_format_unlocked_tracks_a_shared_dependant_across_completions():
+    blocker_count = {"apt_pkg": 7}
+    satisfied = {"apt_pkg": 0}
+    seen = []
+    for _ in range(7):
+        satisfied["apt_pkg"] += 1
+        seen.append(format_unlocked(("apt_pkg",), satisfied, blocker_count))
+    assert seen[0] == "; unlocked: apt_pkg (1/7)"
+    assert seen[-1] == "; unlocked: apt_pkg (7/7)"
+
+
+def test_format_unlocked_empty_for_no_dependants():
+    assert format_unlocked((), {}, {}) == ""
+
+
+# --- format_queueing (reach annotation on the start line) ---
+
+
+def test_format_queueing_omits_both_counts_for_lone_unit_dependant():
+    assert format_queueing(("desktop.brave",), {"desktop.brave": 1}, 1) == ("; queueing: desktop.brave")
+
+
+def test_format_queueing_annotates_a_high_reach_dependant():
+    assert format_queueing(("apt_pkg",), {"apt_pkg": 40}, 40) == ("; queueing (40) : apt_pkg (40)")
+
+
+def test_format_queueing_leads_with_combined_then_per_dependant_reach():
+    suffix = format_queueing(("apt_pkg", "snap"), {"apt_pkg": 40, "snap": 1}, 41)
+    assert suffix == "; queueing (41) : apt_pkg (40), snap"
+
+
+def test_format_queueing_empty_for_no_dependants():
+    assert format_queueing((), {}, 0) == ""
+
+
+# --- build_weights / build_reach (work weight and recursive gating) ---
+
+
+def test_unit_count_defaults_to_one_and_scales_with_versioned_packages():
+    assert CookBase({}).unit_count == 1
+    versioned = FakeVersioned(requested=["a", "b", "c"], before={}, after={}, latest={})
+    assert versioned.unit_count == 3
+
+
+def test_build_weights_reads_each_node_unit_count():
+    config = {"snap": {"packages": ["alpha", "beta"]}}
+    nodes = build_nodes(config)
+    assert build_weights(config, nodes) == {"snap": 2}
+
+
+def test_build_reach_sums_own_weight_plus_downstream():
+    dependents = {"base": ("leaf", "mid"), "mid": ("leaf",), "leaf": ()}
+    weights = {"base": 1, "mid": 1, "leaf": 1}
+    assert build_reach(dependents, weights) == {"base": 3, "mid": 2, "leaf": 1}
+
+
+def test_build_reach_counts_a_shared_dependant_once():
+    dependents = {
+        "prereq": ("repo_a", "repo_b"),
+        "repo_a": ("apt_pkg",),
+        "repo_b": ("apt_pkg",),
+        "apt_pkg": (),
+    }
+    weights = {"prereq": 1, "repo_a": 1, "repo_b": 1, "apt_pkg": 30}
+    reach = build_reach(dependents, weights)
+    assert reach == {"prereq": 33, "repo_a": 31, "repo_b": 31, "apt_pkg": 30}
+
+
+# --- build_dependents (scheduler prioritization) ---
+
+
+def test_build_dependents_reverses_the_graph():
+    graph = {
+        "base": set(),
+        "mid": {"base"},
+        "leaf_a": {"base", "mid"},
+        "leaf_b": set(),
+    }
+    assert build_dependents(graph) == {
+        "base": ("leaf_a", "mid"),
+        "mid": ("leaf_a",),
+        "leaf_a": (),
+        "leaf_b": (),
+    }
+
+
+def test_reach_orders_unblocking_nodes_first():
+    graph = {"base": set(), "mid": {"base"}, "leaf": {"base", "mid"}}
+    dependents = build_dependents(graph)
+    reach = build_reach(dependents, dict.fromkeys(graph, 1))
+    ready = ["leaf", "base", "mid"]
+    assert sorted(ready, key=lambda n: reach[n], reverse=True) == [
+        "base",
+        "mid",
+        "leaf",
+    ]

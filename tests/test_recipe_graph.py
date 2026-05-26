@@ -44,9 +44,7 @@ def test_section_falls_back_to_cook_class_needs_root():
 
 
 def test_plain_section_is_one_node_with_no_entry():
-    node = build_nodes({"apt_pkg": {"needs_root": True, "packages": ["vim"]}})[
-        "apt_pkg"
-    ]
+    node = build_nodes({"apt_pkg": {"needs_root": True, "packages": ["vim"]}})["apt_pkg"]
     assert node.section == "apt_pkg"
     assert node.entry is None
 

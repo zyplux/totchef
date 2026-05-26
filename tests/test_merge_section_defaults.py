@@ -10,9 +10,7 @@ FIXTURE_RECIPE = Path(__file__).parent / "fixtures" / "recipe.toml"
 
 @pytest.fixture
 def section() -> dict:
-    """A subtable section carrying both kinds of defaults (a list `features` and a
-    scalar `channel`), the two meta keys, and three entries that exercise union,
-    override, and pure inheritance."""
+    """A subtable section with list and scalar defaults, the two meta keys, and three entries exercising union, override, and pure inheritance."""
     return {
         "needs_root": True,
         "depends_on": ["apt_pkg"],
@@ -49,8 +47,7 @@ def test_entry_inherits_defaults_when_key_absent(section, entry):
 
 
 def test_inherited_list_is_a_fresh_copy(section):
-    """Mutating one entry's merged list must not bleed into the shared default or
-    another entry — the union builds a new list rather than aliasing."""
+    """Mutating one entry's merged list must not bleed into the shared default or another entry — the union builds a new list, not an alias."""
     merge_section_defaults(section, "code")["features"].append("leak")
     assert section["features"] == ["base_a", "base_b"]
     assert merge_section_defaults(section, "empty")["features"] == ["base_a", "base_b"]
@@ -93,10 +90,5 @@ def fixture_recipe() -> dict:
         ("overlap", ["BaseOne", "BaseTwo", "ExtraThree"]),
     ],
 )
-def test_parsed_toml_entries_resolve_to_expected_features(
-    fixture_recipe, entry, expected
-):
-    assert (
-        merge_section_defaults(fixture_recipe["gpu_apps"], entry)["features"]
-        == expected
-    )
+def test_parsed_toml_entries_resolve_to_expected_features(fixture_recipe, entry, expected):
+    assert merge_section_defaults(fixture_recipe["gpu_apps"], entry)["features"] == expected

@@ -70,7 +70,5 @@ def test_hook_on_versioned_section_is_rejected():
 
 
 def test_hook_on_state_entry_is_accepted():
-    config = {
-        "file": {"shim": {"path": "/tmp/x", "content": "c", "post_hook": "echo done"}}
-    }
+    config = {"file": {"shim": {"path": "/tmp/x", "content": "c", "post_hook": "echo done"}}}
     assert problems_for(config) == []

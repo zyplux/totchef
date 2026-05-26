@@ -22,8 +22,7 @@ from terminal import show_table
 
 
 def ensure_root() -> None:
-    """Re-exec under sudo if not root, preserving argv and the shared log path.
-    sudo sets SUDO_USER, which become_user() drops back to."""
+    """Re-exec under sudo if not root, preserving argv and the shared log path (sudo sets SUDO_USER, which become_user drops back to)."""
     if os.geteuid() == 0:
         return
     os.execvp(
@@ -58,15 +57,11 @@ def print_report(results: dict[str, CookResult], dry_run: bool) -> None:
     if not dry_run:
         unchanged = len(all_rows) - len(changed_rows)
         if unchanged:
-            logger.info(
-                f"{unchanged} item(s) unchanged. Run with --dry-run for the full inventory."
-            )
+            logger.info(f"{unchanged} item(s) unchanged. Run with --dry-run for the full inventory.")
 
 
 def main(
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Probe only; print the report without acting."
-    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Probe only; print the report without acting."),
     lint: bool = typer.Option(
         False,
         "--lint",
@@ -79,7 +74,8 @@ def main(
         logger.info(f"{RECIPE_TOML.name}: valid")
         return
 
-    ensure_root()
+    if not dry_run:
+        ensure_root()
     start_logging()
 
     with RECIPE_TOML.open("rb") as f:

@@ -16,9 +16,7 @@ from harness import logger, write_if_changed
 
 # Refresh KDE's ksycoca so the launcher stops spawning apps with the stale Exec
 # line; tolerant of non-KDE systems where kbuildsycoca6 is absent.
-KSYCOCA_REFRESH = (
-    "command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 --noincremental || true"
-)
+KSYCOCA_REFRESH = "command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 --noincremental || true"
 
 
 def rewrite_exec_line(
@@ -27,17 +25,12 @@ def rewrite_exec_line(
     features: list[str],
     switches: list[str],
 ) -> str:
-    """Idempotent rewrite of a .desktop Exec= value with env prefix, --<switch>s, and
-    --enable-features. New args insert before trailing field codes (%U, %u, %F, %f)."""
+    """Idempotent rewrite of a .desktop Exec= value with env prefix, --<switch>es, and --enable-features, inserting new args before trailing field codes (%U/%u/%F/%f)."""
     tokens = exec_value.split()
 
     if tokens and tokens[0] == "env":
         cursor = 1
-        while (
-            cursor < len(tokens)
-            and "=" in tokens[cursor]
-            and not tokens[cursor].startswith("-")
-        ):
+        while cursor < len(tokens) and "=" in tokens[cursor] and not tokens[cursor].startswith("-"):
             cursor += 1
         tokens = tokens[cursor:]
 
@@ -45,18 +38,11 @@ def rewrite_exec_line(
     # by key so a value change in recipe.toml replaces the old token instead of duplicating.
     managed_keys = {f"--{switch.split('=', 1)[0]}" for switch in switches}
     tokens = [
-        token
-        for token in tokens
-        if not token.startswith("--enable-features=")
-        and not any(token == key or token.startswith(key + "=") for key in managed_keys)
+        token for token in tokens if not token.startswith("--enable-features=") and not any(token == key or token.startswith(key + "=") for key in managed_keys)
     ]
 
     insert_at = next(
-        (
-            index
-            for index, token in enumerate(tokens)
-            if len(token) == 2 and token.startswith("%")
-        ),
+        (index for index, token in enumerate(tokens) if len(token) == 2 and token.startswith("%")),
         len(tokens),
     )
     for switch in switches:
@@ -98,9 +84,7 @@ class DesktopCook(FileStateCook[DesktopEntry]):
         lines = []
         for line in system_desktop.read_text().splitlines():
             if line.startswith("Exec="):
-                lines.append(
-                    "Exec=" + rewrite_exec_line(line[5:], env, features, switches)
-                )
+                lines.append("Exec=" + rewrite_exec_line(line[5:], env, features, switches))
             else:
                 lines.append(line)
         return ("\n".join(lines) + "\n").encode()

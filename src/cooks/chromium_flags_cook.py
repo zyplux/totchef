@@ -50,10 +50,7 @@ class ChromiumFlagsCook(FileStateCook[ChromiumFlagsEntry]):
         return Path.home() / (app.local_state or app.argv_json or "")
 
     def _render(self, name: str) -> bytes | None:
-        """Desired file bytes, or None when there is no base file to patch or the
-        existing file is not valid JSON (apply_resource turns the latter into a
-        soft failure). Returns the on-disk bytes verbatim when no flag would
-        change, so desired == current and chef skips the entry."""
+        """Desired file bytes, or None when there is no base file or it is invalid JSON (apply_resource soft-fails the latter); returns on-disk bytes verbatim when no flag changes, so chef skips the entry."""
         app = self.entries[name]
         target = self._target_path(name)
         if app.local_state is not None:
@@ -67,9 +64,7 @@ class ChromiumFlagsCook(FileStateCook[ChromiumFlagsEntry]):
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 return None
-            experiments = data.setdefault("browser", {}).setdefault(
-                "enabled_labs_experiments", []
-            )
+            experiments = data.setdefault("browser", {}).setdefault("enabled_labs_experiments", [])
             merged = sorted(set(experiments) | set(flags))
             if set(merged) == set(experiments):
                 return raw
@@ -96,11 +91,7 @@ class ChromiumFlagsCook(FileStateCook[ChromiumFlagsEntry]):
         app = self.entries[name]
         # Skip the Local State write while the browser runs (it would race the
         # browser's own write); `! pgrep` exits non-zero when found, so chef skips.
-        guard = (
-            f"! pgrep -x {app.process_name or name} >/dev/null"
-            if app.local_state is not None
-            else None
-        )
+        guard = f"! pgrep -x {app.process_name or name} >/dev/null" if app.local_state is not None else None
         return (chain_hooks(guard, app.pre_hook), app.post_hook)
 
     def apply_resource(self, name: str) -> StateChangeOutcome:

@@ -15,7 +15,8 @@ import pwd
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TextIO
@@ -26,7 +27,12 @@ from toon_format import encode
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = REPO_ROOT / "logs"
 
-LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <22} {level: <7} {message}"
+# The runner column names who is speaking: "chef" for the orchestrator's own
+# lines, the node id (e.g. url.bun, apt_pkg) while a cook runs — see cook_context.
+# Width fits the longest node id so the level/message columns stay aligned.
+DEFAULT_RUNNER = Path(sys.argv[0]).stem
+
+LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <28} {level: <7} {message}"
 
 SHARED_LOG_ENV = "SYS_CONF_PY_LOG_FILE"
 
@@ -51,13 +57,22 @@ LINE_SINK: Callable[[str], None] | None = None
 
 # Configured at import so pre-sudo messages get timestamped too.
 logger.remove()
-logger.configure(extra={"runner": Path(sys.argv[0]).stem})
+logger.configure(extra={"runner": DEFAULT_RUNNER})
 logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=False)
 
 
+@contextmanager
+def cook_context(runner: str) -> Generator[None]:
+    """Label log lines emitted while a cook runs with its node id, then restore "chef"; uses logger.configure (core extra, not contextualize) so the label reaches spawned worker threads too."""
+    logger.configure(extra={"runner": runner})
+    try:
+        yield
+    finally:
+        logger.configure(extra={"runner": DEFAULT_RUNNER})
+
+
 def write_log(text: str) -> None:
-    """Append text to the run's log file under a lock — the only writer to the
-    file, shared by the pump thread and terminal.py's TOON writer."""
+    """Append text to the run's log file under a lock — the only writer, shared by the pump thread and terminal.py's TOON writer."""
     if LOG_HANDLE is None:
         return
     with LOG_LOCK:
@@ -71,8 +86,7 @@ def _emit_terminal(line: str) -> None:
 
 
 def _pump(read_fd: int) -> None:
-    """Mirror each line of the merged log stream to the file and the terminal. A
-    line matching a registered drain marker is swallowed and signals its event."""
+    """Mirror each line of the merged log stream to the file and terminal; a line matching a registered drain marker is swallowed and signals its event."""
     with os.fdopen(read_fd, "r", errors="replace") as stream:
         for line in stream:
             if (event := DRAIN_EVENTS.pop(line.strip(), None)) is not None:
@@ -83,9 +97,7 @@ def _pump(read_fd: int) -> None:
 
 
 def drain_logs(timeout: float = 5.0) -> None:
-    """FIFO barrier: block until the pump has processed everything written so far,
-    so a directly-rendered table/banner lands after the logs that preceded it.
-    Call only once all forked cooks are reaped (nothing writes after the marker)."""
+    """FIFO barrier: block until the pump has processed everything written so far; call only once all forked cooks are reaped (nothing writes after the marker)."""
     if LOG_PIPE_WRITE is None:
         return
     marker = uuid.uuid4().hex
@@ -95,10 +107,7 @@ def drain_logs(timeout: float = 5.0) -> None:
 
 
 def start_logging() -> Path:
-    """Open logs/<run>.log and start the pump: redirect fd 1/2 into a pipe the pump
-    thread reads, so the parent's and every forked cook's output funnels through one
-    writer. Honors SHARED_LOG_ENV if set, else creates a timestamped file and exports
-    it. Pre-chowns to SUDO_USER so root-written lines keep the original owner."""
+    """Open logs/<run>.log and start the pump (redirect fd 1/2 into a pipe one thread reads); honor SHARED_LOG_ENV or create a timestamped file, chowned to SUDO_USER."""
     LOG_DIR.mkdir(exist_ok=True)
     if existing := os.environ.get(SHARED_LOG_ENV):
         log_file = Path(existing)
