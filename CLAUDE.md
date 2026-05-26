@@ -16,6 +16,7 @@ Tooling is `uv` (Python ≥ 3.14) driven through `just`:
 - `just tc` — lint, then `uvx pyright src`.
 - `just test` — typecheck, then `uv run pytest`.
 - Single test: `uv run pytest tests/test_recipe_graph.py::test_name`.
+- `just clone <owner/name|url> [ref]` — shallow-clone a reference repo into `reference_clones/` for browsing; with a `ref`, keep history back to (but excluding) that commit. Not part of `up`/idempotency — a manual dev helper.
 
 ## Architecture
 

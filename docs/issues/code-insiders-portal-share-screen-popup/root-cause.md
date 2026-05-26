@@ -1,9 +1,5 @@
 # Root Cause — Spurious Screen-Share Popup (code-insiders 1.122)
 
-Plain-language companion to [`investigation.md`](./investigation.md). Read this to
-understand *why* the popup happens and *what to change* to fix it — enough to
-write an informed comment on the upstream issues.
-
 ## The bug in one sentence
 
 To make the "Record screen" button in the Issue Reporter feel instant, VS Code
@@ -21,14 +17,43 @@ dialog. So the dialog pops up at boot, unprompted.
 3. On macOS this is guarded behind a permission check. On Windows and **Linux**
    it runs unconditionally, because historically "list the screens" was a silent,
    non-interactive operation on those platforms.
-4. **On Wayland that assumption is false.** There is no silent way to list
-   screens. The request goes through the desktop portal
-   (`org.freedesktop.portal.ScreenCast` → `CreateSession` → `SelectSources` →
-   `Start`), and `Start` *is* the popup. So the "harmless warm-up" becomes a
-   consent prompt — fired by the app itself, with no user action.
+4. **On Wayland that assumption is false** — listing the screens isn't a silent
+   query, it *is* the consent dialog. Electron's `getSources` has no choice but
+   to negotiate a capture session through the desktop portal
+   (`org.freedesktop.portal.ScreenCast`: `CreateSession → SelectSources →
+   Start`), and the `Start` step is exactly when the compositor paints the
+   "Choose what to share" chooser. So the "harmless warm-up" becomes a consent
+   prompt — fired by the app itself, with no user action. The next section proves
+   why this is *unavoidable* on Wayland, not just an unlucky quirk.
 
 That's why your D-Bus trace shows the full handshake (and the `webrtc_session…`
 token) at boot with nobody clicking anything.
+
+## Why this is unavoidable on Wayland (the proof)
+
+The warm-up assumes listing screens is a silent background call. On Wayland it
+isn't, by design — and the chain below forces the popup:
+
+1. **No client can see the screen.** Wayland isolates clients; only the
+   compositor sees everything, and the protocol has no call to read or even
+   enumerate the shareable screens.
+2. **Capture must go through a broker.** The only path is `xdg-desktop-portal`
+   (D-Bus): an app negotiates a session, the portal enforces consent, and only
+   then returns a PipeWire stream. There is no list-now-consent-later mode.
+3. **The dialog lives in the last of three steps.** `CreateSession` (no UI) →
+   `SelectSources` (no UI) → `Start` — which the spec says *"will typically
+   result [in] the portal presenting a dialog letting the user do the selection
+   set up by SelectSources."* That dialog **is** the popup; the stream's PipeWire
+   fd arrives only after the user picks.
+4. **No query skips `Start`.** Enumerating screens and consenting to capture are
+   the *same* operation — the list is produced by the chooser. The only door is
+   the consent dialog.
+
+∴ When `desktopCapturer.getSources({ types: ['screen'] })` runs on Wayland,
+Chromium can only drive `CreateSession → SelectSources → Start` — so the warm-up
+fires its own consent dialog at boot, with no click. That is exactly the trace:
+the full handshake (with the Chromium `webrtc_session…` token) at startup. It's
+not a separate bug — it's the only thing the warm-up *can* do here.
 
 ## Why the popup keeps coming back
 
@@ -42,8 +67,7 @@ listens for three events:
 On KDE/Wayland, `display-metrics-changed` fires often (scale-factor / geometry
 recalculation), and **opening any new webview or window** (Welcome tab, Markdown
 preview, an extension's page) triggers that recalculation. Each event re-runs the
-warm-up → a fresh portal session → another popup. That explains both the
-~30–60 s recurrence and the "it pops up every time I open a tab" reports.
+warm-up → a fresh portal session → another popup.
 
 ## Why the obvious explanations are wrong
 
@@ -52,10 +76,6 @@ warm-up → a fresh portal session → another popup. That explains both the
   only runs when *you click the Record button* — it never self-fires at boot.
   The boot-time popup comes from the **main process** cache warm-up, not the
   renderer.
-- **"Force X11 with `--ozone-platform=x11`"**: doesn't help, because what matters
-  is that the *session* is Wayland. Even an X11/XWayland app on a Wayland session
-  still captures the screen through the portal. So switching VS Code's rendering
-  backend changes nothing — exactly what was observed.
 - **"It names no app / GNOME's portal crashes"**: the call comes from the Electron
   main process with no window attached, so the portal has no app name or parent
   window to show. GNOME's portal additionally crashes (SIGSEGV) on that

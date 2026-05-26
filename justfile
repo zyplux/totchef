@@ -19,20 +19,21 @@ tc: lint
 test: tc
     uv run pytest
 
+# Shallow-clone a repo (owner/name or URL) into reference_clones/; optional ref keeps history back to but excluding that commit/tag (e.g. just clone microsoft/vscode 1.121.0)
 clone repo ref="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{repo}}" in
-        http*://* | git@*) url="{{repo}}" ;;
-        *) url="https://github.com/{{repo}}.git" ;;
-    esac
-    name="$(basename "{{repo}}" .git)"
-    dest="reference_clones/$name"
-    [ -e "$dest" ] && { echo "$dest already exists — remove it first: rm -rf $dest" >&2; exit 1; }
-    if [ -z "{{ref}}" ]; then
-        git clone --depth 1 --single-branch "$url" "$dest"
-        echo "Cloned $url -> $dest (shallow, default branch tip). Delete with: rm -rf $dest"
-    else
-        git clone --shallow-exclude="{{ref}}" --single-branch "$url" "$dest"
-        echo "Cloned $url -> $dest (default branch tip, history back to but excluding {{ref}}). Delete with: rm -rf $dest"
-    fi
+    #!/usr/bin/env -S uv run --script
+    # /// script
+    # requires-python = ">=3.14"
+    # ///
+    import shutil, subprocess, sys
+    from pathlib import Path
+
+    repo, ref = "{{repo}}", "{{ref}}"
+    url = repo if "://" in repo or repo[:4] == "git@" else f"https://github.com/{repo}.git"
+    dest = Path("reference_clones") / Path(repo).name.removesuffix(".git")
+    if dest.exists():
+        input(f"{dest} exists — rm -rf and re-clone? [enter to continue, ^C to abort] ")
+        shutil.rmtree(dest)
+    opts = ["--shallow-exclude", ref] if ref else ["--depth", "1"]
+    subprocess.run(["git", "clone", *opts, "--single-branch", url, dest], check=True)
+
