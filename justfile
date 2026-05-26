@@ -19,7 +19,7 @@ tc: lint
 test: tc
     uv run pytest
 
-clone repo:
+clone repo ref="":
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{repo}}" in
@@ -29,5 +29,10 @@ clone repo:
     name="$(basename "{{repo}}" .git)"
     dest="reference_clones/$name"
     [ -e "$dest" ] && { echo "$dest already exists — remove it first: rm -rf $dest" >&2; exit 1; }
-    git clone --depth 1 --single-branch "$url" "$dest"
-    echo "Cloned $url -> $dest (shallow, single-branch). Delete with: rm -rf $dest"
+    if [ -z "{{ref}}" ]; then
+        git clone --depth 1 --single-branch "$url" "$dest"
+        echo "Cloned $url -> $dest (shallow, default branch tip). Delete with: rm -rf $dest"
+    else
+        git clone --shallow-exclude="{{ref}}" --single-branch "$url" "$dest"
+        echo "Cloned $url -> $dest (default branch tip, history back to but excluding {{ref}}). Delete with: rm -rf $dest"
+    fi
