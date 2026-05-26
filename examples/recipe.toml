@@ -1,60 +1,3 @@
-# recipe.toml — declarative config for sys-conf-py.
-#
-# Each top-level section maps to one cook in src/cooks/ by name: section [foo] ->
-# cooks/foo_cook.py, or cooks/foo_root_cook.py if it is an always-root cook. Chef
-# imports the sole VersionedCook/StateCook subclass there (no central registry).
-#   [url.<name>]       -> cooks/url_cook             (curl | bash vendor installers)
-#   [cargo]            -> cooks/cargo_cook           (crates via cargo-binstall)
-#   [uv]               -> cooks/uv_cook              (Python CLI tools)
-#   [file.<name>]      -> cooks/file_cook            (install a file with exact content)
-#   [bash.<name>]      -> cooks/bash_cook            (idempotent shell snippets)
-#   [apt_repo.<name>]  -> cooks/apt_repo_root_cook   (third-party apt repos + keys)
-#   [apt_pkg]          -> cooks/apt_pkg_root_cook    (package install via nala)
-#   [snap]             -> cooks/snap_root_cook       (snap install/refresh)
-#   [desktop.<app>]        -> cooks/desktop_cook         (.desktop Exec= overrides)
-#   [chromium_flags.<app>] -> cooks/chromium_flags_cook  (browser GPU-flag JSON)
-#   [settings.<app>]       -> cooks/settings_cook        (JSON env-block merge)
-#
-# A section with named subtables ([url.<name>], [file.<name>], [bash.<name>],
-# [apt_repo.<name>], [desktop.<app>], [chromium_flags.<app>], [settings.<app>])
-# expands to one graph node per entry; a section with plain data ([apt_pkg]) is a
-# single node. Two reserved fields are
-# read by chef per entry (falling back to the section, then the cook class) and
-# stripped before the slice reaches the cook:
-#   needs_root  bool  true -> chef runs the node in-process as root; false ->
-#                     chef forks + drops to the invoking user. Default is the
-#                     cook's own: an always-root *_root_cook is true, every other
-#                     cook false. Granted per entry, case by case (least
-#                     privilege) — there is no blanket section default: --lint
-#                     rejects needs_root on a subtable header (it would fold down
-#                     onto every entry). Set it on the leaf that needs it.
-#   depends_on  list  (default [])  what must finish first: a node — an entry
-#                     ("url.rustup", "bash.apt_prereqs") or a single-node section
-#                     ("apt_pkg") — or a whole section ("apt_repo"), which fans
-#                     out to all its entries. Name the smallest unit that matches
-#                     the need: a section only when you depend on all of it (so
-#                     apt_pkg -> "apt_repo", but two named "bash.*" steps, not the
-#                     whole "bash"). chef topo-sorts via graphlib.
-
-# ---------------------------------------------------------------------------
-# url — vendor `curl | bash` CLIs
-# ---------------------------------------------------------------------------
-#
-# Required: url.
-# Optional:
-#   bin            probe binary for idempotency (default: subtable name)
-#   args           appended after `bash -s --`
-#   update_action  list -> `<bin> <update_action...>`; "rerun-installer" ->
-#                  re-pipe url; absent -> no update
-#   update_guard   bash one-liner run via `bash -c` before update_action (a
-#                  url_cook-internal guard, not chef's StateCook pre_hook).
-#                  `<bin>`'s dir is prepended to PATH. Non-zero exit aborts
-#                  the update as a soft failure. Must be an idempotent guard
-#                  (it can also run on first install). Used by herdr: its
-#                  `server stop` returns when the API ack lands, ~700ms before
-#                  the server process actually exits — so the one-liner stops
-#                  AND polls `herdr status server` until "not running".
-
 [url.bun]
 url = "https://bun.sh/install"
 update_action = ["upgrade"]
@@ -80,10 +23,6 @@ update_guard = "command -v herdr >/dev/null || exit 0; herdr server stop || true
 [url.agy]
 url = "https://antigravity.google/cli/install.sh"
 
-# ---------------------------------------------------------------------------
-# cargo — crates via cargo-binstall (needs rustup/cargo from [url.rustup])
-# ---------------------------------------------------------------------------
-
 [cargo]
 depends_on = ["url.rustup"]
 packages = [
@@ -94,37 +33,18 @@ packages = [
     "rumdl",
 ]
 
-# ---------------------------------------------------------------------------
-# uv — Python CLI tools, isolated venvs symlinked into ~/.local/bin
-# (needs uv from [url.uv])
-# ---------------------------------------------------------------------------
-
 [uv]
 depends_on = ["url.uv"]
 packages = [
     "ruff",
 ]
 
-# ---------------------------------------------------------------------------
-# file — install a file with exact content (file_cook). Each [file.<name>] sets
-# path + (content | source under src/files/) + optional mode/pre_hook/post_hook;
-# chef diffs by content hash and fires `post_hook` only when the file changed.
-# needs_root and depends_on are set per entry.
-# ---------------------------------------------------------------------------
-
-# The shim [bash.*] snippets pipe file writes through. Nothing depends on apt,
-# so it runs early — bash.ubuntu_pin depends_on it.
 [file.write_if_changed]
 needs_root = true
 source = "write-if-changed.py"
 path = "/usr/local/bin/write-if-changed"
 mode = "0755"
 
-# A DPkg Pre/Post-Invoke hook that lifts the /etc/apt/trusted.gpg.d/ immutable
-# bit only around dpkg runs (so apt + do-release-upgrade still write keys there),
-# blocking drive-by key drops the rest of the time. The `post` hook sets the bit
-# on first install; thereafter the Post-Invoke hook in this file re-asserts it
-# after every apt run.
 [file.trusted_gpgd_hardening]
 needs_root = true
 path = "/etc/apt/apt.conf.d/99-trusted-gpgd-autounlock"
@@ -136,23 +56,16 @@ DPkg::Post-Invoke { "/usr/bin/chattr +i /etc/apt/trusted.gpg.d/ 2>/dev/null || t
 """
 post_hook = "lsattr -d /etc/apt/trusted.gpg.d/ 2>/dev/null | awk '{print $1}' | grep -q i || chattr +i /etc/apt/trusted.gpg.d/"
 
-# Force deep S3 suspend (s2idle crash mitigation; docs/investigations/sleep-crash.md).
-# A /etc/default/grub.d drop-in, sourced by grub-mkconfig after /etc/default/grub;
-# it re-normalizes GRUB_CMDLINE_LINUX_DEFAULT so the generated cmdline carries
-# mem_sleep_default=deep exactly once (even if it was set in-place before).
-# Independent of the NVIDIA driver, so it keeps the default depends_on = [].
 [file.grub_deep_sleep]
 needs_root = true
 path = "/etc/default/grub.d/99-mem-sleep-deep.cfg"
 mode = "0644"
 content = """
-# Force deep S3 suspend (s2idle crash mitigation; docs/investigations/sleep-crash.md).
+# Force deep S3 suspend (s2idle crash mitigation; docs/issues/sleep-crash/sleep-crash.md).
 GRUB_CMDLINE_LINUX_DEFAULT="$(echo "$GRUB_CMDLINE_LINUX_DEFAULT" | sed -E 's/ *mem_sleep_default=[^ "]*//g') mem_sleep_default=deep"
 """
 post_hook = "update-grub"
 
-# eGPU-prime boot selector + its systemd unit. The boot-time eGPU-primary
-# conditionality stays in egpu-prime-switch itself. Needs prime-select (driver).
 [file.egpu_switch]
 needs_root = true
 source = "egpu-prime-switch.py"
@@ -168,8 +81,6 @@ mode = "0644"
 depends_on = ["apt_pkg"]
 post_hook = "systemctl daemon-reload; systemctl enable egpu-prime.service"
 
-# NVIDIA suspend / runtime-PM modprobe options (also part of the s2idle crash
-# mitigation). Needs the driver installed so update-initramfs has it to bake in.
 [file.nvidia_power]
 needs_root = true
 path = "/etc/modprobe.d/nvidia-power.conf"
@@ -182,19 +93,6 @@ options nvidia NVreg_EnableS0ixPowerManagement=0
 """
 post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service 2>/dev/null || true; update-initramfs -u"
 
-# ---------------------------------------------------------------------------
-# bash — apt setup as idempotent shell snippets that prepare the apt environment
-# before any repo/package work. Each entry mirrors the StateCook lifecycle in
-# TOML: `current_state` (a read-only probe echoing the current token),
-# `desired_state` (the target token), and `apply` (run only when they differ).
-# needs_root and depends_on are set per entry.
-# ---------------------------------------------------------------------------
-
-# Cross-repo safety: uprank Ubuntu main/updates/security to priority 900 (the
-# default is 500) so a third-party package colliding by name with an Ubuntu
-# one loses to Ubuntu. Third-party-only packages still install at 500.
-# Backports is intentionally NOT upranked (it ships NotAutomatic: yes, prio 1).
-# For a per-package third-party override, drop a pin > 900 in preferences.d/.
 [bash.ubuntu_pin]
 needs_root = true
 apply = '''
@@ -220,17 +118,12 @@ current_state = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo pre
 desired_state = "present"
 depends_on = ["file.write_if_changed"]
 
-# Stop code-insiders' postinst from rewriting our [apt_repo.vscode] source.
-# debconf-set-selections is idempotent; runs before any apt transaction.
 [bash.code_insiders_debconf]
 needs_root = true
 apply = "echo 'code-insiders code-insiders/add-microsoft-repo boolean false' | debconf-set-selections"
 current_state = "debconf-show code-insiders 2>/dev/null | grep -q 'add-microsoft-repo: false' && echo set || echo unset"
 desired_state = "set"
 
-# Prerequisites for repo/key handling and the package transaction. nala is the
-# package frontend used by [apt_pkg]; curl/gnupg/ca-certificates back key
-# fetch + dearmor. Bootstraps from a clean system that only has uv.
 [bash.apt_prereqs]
 needs_root = true
 apply = '''
@@ -240,14 +133,6 @@ apt-get install -y --no-install-recommends curl gnupg ca-certificates nala
 '''
 current_state = "command -v nala >/dev/null && echo present || echo absent"
 desired_state = "present"
-
-# ---------------------------------------------------------------------------
-# apt_repo — third-party apt repos. GPG key under /usr/share/keyrings/<name>.gpg
-# + a .sources file with Signed-By: so each key authorises only its own repo.
-#
-# Required: key_url, uris. Optional: suites ("stable"), components ("main"),
-# architectures, keyring, source_path. {release} interpolated in suites.
-# ---------------------------------------------------------------------------
 
 [apt_repo]
 depends_on = ["bash.apt_prereqs"]
@@ -274,14 +159,6 @@ key_url = "https://updates.signal.org/desktop/apt/keys.asc"
 uris = "https://updates.signal.org/desktop/apt"
 suites = "xenial"
 
-# ---------------------------------------------------------------------------
-# apt_pkg — packages via nala (full-upgrade + install + autoremove).
-# Version pin: "name=version". depends_on the whole "apt_repo" section (it needs
-# every repo configured, and each repo already chains back to bash.apt_prereqs
-# for nala), plus the two bash steps apt_repo can't order: the archive pins
-# (before full-upgrade) and the code-insiders debconf seed (before its install).
-# ---------------------------------------------------------------------------
-
 [apt_pkg]
 depends_on = [
     "apt_repo",
@@ -294,21 +171,8 @@ packages = [
     "nala",
     "vainfo",
     "linux-crashdump",
-
-    # RISK: Ubuntu rebuilds retired nvidia metapackages as transitional shims
-    # (Depends: nvidia-driver-<NEW>-open) -> full-upgrade silently jumps branches.
-    # Mitigation: every other nvidia-driver-* pinned to Pin-Priority: -1.
     "nvidia-driver-580-open",
-
-    # VA-API -> NVDEC shim so browsers HW-decode video on the eGPU instead of
-    # the CPU (4K YouTube was pegging a renderer at ~130% after the GPU flip
-    # moved the render node to NVIDIA, which exposes no native VA-API driver).
-    # Host-side only: it lands nvidia_drv_video.so under /usr/lib for host apps
-    # (Brave at /opt); snap-confined browsers ship their own graphics stack and
-    # may not see it. Needs LIBVA_DRIVER_NAME=nvidia + NVD_BACKEND=direct at
-    # runtime (egl backend is broken on driver >=525; we run 580).
     "nvidia-vaapi-driver",
-
     "zed",
     "brave-browser",
     "code",
@@ -317,35 +181,14 @@ packages = [
     "signal-desktop",
 ]
 
-# ---------------------------------------------------------------------------
-# snap — browsers Ubuntu ships only as snaps (the apt firefox/chromium-browser
-# packages are transitional debs that just pull these). Installed as snaps
-# openly. VA-API via the NVIDIA shim is unreliable inside snap confinement, so
-# these may software-decode video regardless of the host nvidia-vaapi-driver.
-# Only strictly-confined snaps; classic snaps are out of scope.
-# ---------------------------------------------------------------------------
-
 [snap]
 packages = [
     "firefox",
     "chromium",
 ]
 
-# ---------------------------------------------------------------------------
-# Per-app GPU/config tuning — three user-scope cooks, one subtable per app under
-# the cook that consumes it (depends_on = ["apt_pkg"], inherited by each entry).
-# An app tuned two ways (brave: .desktop + Local State) appears under both
-# sections. The Chromium feature set is listed explicitly per entry rather than
-# shared — duplicated across entries, but each is self-contained.
-#   [desktop.<app>]        desktop_cook        — .desktop Exec= overrides
-#   [chromium_flags.<app>] chromium_flags_cook — Chromium Local State / Electron argv.json
-#   [settings.<app>]       settings_cook       — merge an env block into a JSON file
-# ---------------------------------------------------------------------------
-
 [desktop]
 depends_on = ["apt_pkg"]
-# Base Chromium VA-API features, shared by every app below; each entry unions its
-# own extras on top (lists merge, scalars override — see CLAUDE.md).
 features = [
     "VaapiOnNvidiaGPUs",
     "AcceleratedVideoDecodeLinuxGL",
@@ -355,11 +198,7 @@ features = [
 
 [desktop.brave]
 desktop = "/usr/share/applications/brave-browser.desktop"
-# brave-only: AcceleratedVideoEncoder (outbound WebRTC / MediaRecorder),
-# WebRTCPipeWireCapturer (Wayland getDisplayMedia capture).
 features = ["AcceleratedVideoEncoder", "WebRTCPipeWireCapturer"]
-# No switches: render-node-override is silently overridden by Chromium on this
-# hybrid Intel + NVIDIA (eGPU) PRIME setup.
 
 [desktop.code]
 desktop = "/usr/share/applications/code.desktop"
@@ -369,8 +208,6 @@ desktop = "/usr/share/applications/code-insiders.desktop"
 
 [chromium_flags]
 depends_on = ["apt_pkg"]
-# Base features for the argv_json (Electron) apps; brave below uses local_state
-# and ignores `features`. Each entry unions its own extras on top.
 features = [
     "VaapiOnNvidiaGPUs",
     "AcceleratedVideoDecodeLinuxGL",
@@ -378,16 +215,10 @@ features = [
     "WaylandLinuxDrmSyncobj",
 ]
 
-# brave://flags via Local State (id@option-index; @1 = Enabled). Empty for now;
-# uncomment a line to add one.
 [chromium_flags.brave]
 local_state = ".config/BraveSoftware/Brave-Browser/Local State"
-local_state_flags = [
-    # "enable-unsafe-webgpu@1",
-]
+local_state_flags = []
 
-# argv.json keys go through VS Code's hardcoded allowlist; anything outside it is
-# dropped. enable-features is synthesized from `features`.
 [chromium_flags.code]
 argv_json = ".vscode/argv.json"
 
@@ -396,8 +227,6 @@ argv_json = ".vscode/argv.json"
 "enable-gpu-rasterization" = true
 "ignore-gpu-blocklist"     = true
 
-# render-node-override hangs the GPU process at startup here — Electron does not
-# silently override it the way Brave's Chromium does on this hybrid PRIME setup.
 [chromium_flags.code_insiders]
 argv_json = ".vscode-insiders/argv.json"
 
@@ -409,9 +238,6 @@ argv_json = ".vscode-insiders/argv.json"
 [settings]
 depends_on = ["apt_pkg"]
 
-# Suppress claude.ai account-level MCP connectors from auto-loading into local
-# sessions. Set in settings.json's env block — narrower than ~/.bashrc, which
-# would leak the value into every child shell.
 [settings.claude_code]
 settings_json = ".claude/settings.json"
 settings_env = { ENABLE_CLAUDEAI_MCP_SERVERS = "false" }

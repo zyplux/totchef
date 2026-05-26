@@ -1,11 +1,9 @@
-"""Recipe -> scheduling graph: turn recipe.toml into a DAG of Nodes and resolve each section to its cook class (graph validation lives in schema_lint)."""
+"""Recipe -> scheduling graph: turn recipe.toml into a DAG of Nodes (section -> cook resolution lives in registry, graph validation in schema_lint)."""
 
-import importlib
-import importlib.util
 import sys
 from dataclasses import dataclass
 
-from cook_base import CookBase
+from totchef.registry import load_cook_class
 
 # Keys chef reads off a slice, then strips before handing it to the cook.
 META_KEYS = ("needs_root", "depends_on")
@@ -29,20 +27,6 @@ def merge_section_defaults(section_data: dict, entry: str) -> dict:
         elif key not in entry_data:
             merged[key] = list(shared)
     return merged
-
-
-def load_cook_class(section: str) -> type[CookBase]:
-    """Import cooks/<section>_root_cook.py or <section>_cook.py, whichever exists, and return its single CookBase subclass."""
-    candidates = [f"cooks.{section}{suffix}" for suffix in ("_root_cook", "_cook") if importlib.util.find_spec(f"cooks.{section}{suffix}") is not None]
-    if not candidates:
-        sys.exit(f"ERROR: [{section}] -> no cooks/{section}_cook.py or cooks/{section}_root_cook.py.")
-    if len(candidates) > 1:
-        sys.exit(f"ERROR: [{section}] -> both {' and '.join(candidates)} exist; keep exactly one.")
-    module = importlib.import_module(candidates[0])
-    classes = [obj for obj in vars(module).values() if isinstance(obj, type) and issubclass(obj, CookBase) and obj.__module__ == module.__name__]
-    if len(classes) != 1:
-        sys.exit(f"ERROR: {candidates[0]} must define exactly one cook class, found {len(classes)}: {[c.__name__ for c in classes]}.")
-    return classes[0]
 
 
 @dataclass(frozen=True)

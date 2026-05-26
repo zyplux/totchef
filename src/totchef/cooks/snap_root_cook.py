@@ -3,8 +3,8 @@
 import shutil
 import subprocess
 
-from cook_base import PackageListCook, SyncOutcome
-from harness import stream_subprocess
+from totchef.cook_base import PackageListCook, SyncOutcome
+from totchef.harness import stream_subprocess
 
 
 def parse_snap_list(output: str) -> dict[str, str]:

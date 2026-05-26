@@ -1,7 +1,7 @@
 """Terminal log coloring: each cook's name gets a stable palette hue (so its lines are trackable), while the message keeps its severity/state color."""
 
-import terminal
-from terminal import RUNNER_PALETTE, _line_style, _report_cell, _runner_style
+from totchef import terminal
+from totchef.terminal import RUNNER_PALETTE, _line_style, _report_cell, _runner_style
 
 
 def test_runner_color_is_stable_and_from_palette():

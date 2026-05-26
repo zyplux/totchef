@@ -1,30 +1,51 @@
-#!/usr/bin/env -S uv run
-"""Orchestrator for `just up`: re-exec as root, parse recipe.toml into a graph, run the cooks, report. Exit codes: 0 ok, 75 soft fail, 1 hard fail (aborts)."""
+"""totchef CLI: find the recipe, re-exec as root for an apply, run the cooks, report. Exit codes: 0 ok, 75 soft fail, 1 hard fail (aborts)."""
 
 import os
 import sys
 import time
 import tomllib
+from pathlib import Path
+from typing import Annotated
 
 import typer
 from loguru import logger
+from rich.console import Console
+from rich.table import Table
 
-from cook_base import CookResult
-from cook_runner import format_duration, run_recipe
-from harness import RECIPE_TOML, SOFT_FAIL_EXIT
-from logs import SHARED_LOG_ENV, drain_logs, set_terminal_echo, start_logging
-from schema_lint import validate
-from terminal import show_table
+from totchef import __version__
+from totchef.cook_base import CookResult
+from totchef.cook_runner import format_duration, run_recipe
+from totchef.harness import SOFT_FAIL_EXIT
+from totchef.logs import SHARED_LOG_ENV, drain_logs, set_terminal_echo, start_logging
+from totchef.recipe import RECIPE_ENV, find_recipe
+from totchef.registry import cook_registry
+from totchef.schema_lint import validate
+from totchef.terminal import show_table
+
+app = typer.Typer(
+    name="totchef",
+    no_args_is_help=True,
+    add_completion=False,
+    help="Hand it a recipe.toml; it makes the machine comply. Idempotent, declarative system configuration.",
+)
+
+RecipeOption = Annotated[
+    Path | None,
+    typer.Option("--recipe", "-r", help="Recipe path (default: search cwd upward, then ~/.config/totchef, then /etc/totchef)."),
+]
 
 
-def ensure_root() -> None:
-    """Re-exec under sudo if not root, preserving argv and the shared log path (sudo sets SUDO_USER, which become_user drops back to)."""
+def ensure_root(recipe_path: Path) -> None:
+    """Re-exec under sudo if not root, pinning the already-resolved recipe and the shared log path across the boundary (sudo sets SUDO_USER, which become_user drops back to)."""
     if os.geteuid() == 0:
         return
-    os.execvp(
-        "sudo",
-        ["sudo", f"--preserve-env={SHARED_LOG_ENV}", sys.executable, *sys.argv],
-    )
+    os.environ[RECIPE_ENV] = str(recipe_path)
+    os.execvp("sudo", ["sudo", f"--preserve-env={SHARED_LOG_ENV},{RECIPE_ENV}", sys.executable, *sys.argv])
+
+
+def load_recipe(recipe_path: Path) -> dict:
+    with recipe_path.open("rb") as f:
+        return tomllib.load(f)
 
 
 def cook_node(node_id: str, name: str) -> str:
@@ -78,27 +99,14 @@ def preview_plan(config: dict) -> None:
     print_report(results, dry_run=True, title="Plan")
 
 
-def main(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Probe only; print the report without acting."),
-    lint: bool = typer.Option(
-        False,
-        "--lint",
-        help="Validate recipe.toml against the cook schemas and exit; no root, no changes.",
-    ),
-) -> None:
-    if lint:
-        with RECIPE_TOML.open("rb") as f:
-            validate(tomllib.load(f))
-        logger.info(f"{RECIPE_TOML.name}: valid")
-        return
-
+def apply(recipe_path: Path, dry_run: bool) -> None:
+    """Load, validate, and run the recipe; an apply escalates to root and previews the plan first, then reports and signals failures through the exit code."""
     if not dry_run:
-        ensure_root()
+        ensure_root(recipe_path)
     start_logging(echo_to_terminal=not dry_run)
     start = time.monotonic()
 
-    with RECIPE_TOML.open("rb") as f:
-        config = tomllib.load(f)
+    config = load_recipe(recipe_path)
     validate(config)
 
     if not dry_run:
@@ -115,7 +123,7 @@ def main(
         if result.status == "hard_fail" and result.message:
             logger.error(f"[{result.cook}] {result.message}")
     if hard:
-        logger.error(f"=== Hard failures: {', '.join(hard)} — `just up` aborted ===")
+        logger.error(f"=== Hard failures: {', '.join(hard)} — apply aborted ===")
         drain_logs()
         raise typer.Exit(1)
     if soft:
@@ -125,5 +133,59 @@ def main(
     drain_logs()
 
 
+@app.command()
+def up(recipe: RecipeOption = None) -> None:
+    """Apply the recipe, converging the system to it (escalates to root)."""
+    apply(find_recipe(recipe), dry_run=False)
+
+
+@app.command()
+def plan(recipe: RecipeOption = None) -> None:
+    """Dry-run: probe and print what would change. No root, no changes."""
+    apply(find_recipe(recipe), dry_run=True)
+
+
+@app.command()
+def lint(recipe: RecipeOption = None) -> None:
+    """Validate the recipe against the cook schemas and exit. No root, no changes."""
+    path = find_recipe(recipe)
+    validate(load_recipe(path))
+    typer.echo(f"{path}: valid")
+
+
+@app.command()
+def where(recipe: RecipeOption = None) -> None:
+    """Print the recipe path totchef would use and exit."""
+    typer.echo(find_recipe(recipe))
+
+
+@app.command()
+def cooks() -> None:
+    """List every available cook — built-in, plugin, or local — and the recipe section it serves."""
+    table = Table(title="Available cooks", title_style="bold", header_style="bold cyan")
+    for column in ("section", "scope", "origin"):
+        table.add_column(column)
+    for section, entry in sorted(cook_registry().items()):
+        table.add_row(section, "root" if entry.needs_root else "user", entry.origin)
+    Console().print(table)
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"totchef {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def root(
+    version: Annotated[bool, typer.Option("--version", callback=version_callback, is_eager=True, help="Show the version and exit.")] = False,
+) -> None:
+    pass
+
+
+def main() -> None:
+    app()
+
+
 if __name__ == "__main__":
-    typer.run(main)
+    main()

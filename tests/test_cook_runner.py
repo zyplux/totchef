@@ -3,8 +3,8 @@
 import contextlib
 import types
 
-import cook_runner
-from cook_base import (
+from totchef import cook_runner
+from totchef.cook_base import (
     CookBase,
     CookResult,
     StateChangeOutcome,
@@ -12,7 +12,7 @@ from cook_base import (
     SyncOutcome,
     VersionedCook,
 )
-from cook_runner import (
+from totchef.cook_runner import (
     build_dependents,
     build_reach,
     build_weights,
@@ -27,7 +27,7 @@ from cook_runner import (
     run_state,
     run_versioned,
 )
-from recipe_graph import Node, build_nodes
+from totchef.recipe_graph import Node, build_nodes
 
 HEX = "a" * 64
 HEX2 = "b" * 64

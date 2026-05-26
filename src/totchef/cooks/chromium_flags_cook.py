@@ -5,8 +5,8 @@ from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec, chain_hooks
-from harness import logger, write_if_changed
+from totchef.cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec, chain_hooks
+from totchef.harness import logger, write_if_changed
 
 
 def _strip_json_comments(text: str) -> str:

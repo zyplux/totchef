@@ -6,8 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import PackageListCook, SyncOutcome
-from harness import fetch_latest_concurrent, fetch_url, find_binary, stream_subprocess
+from totchef.cook_base import PackageListCook, SyncOutcome
+from totchef.harness import fetch_latest_concurrent, fetch_url, find_binary, stream_subprocess
 
 CRATES_API = "https://crates.io/api/v1/crates/{name}"
 

@@ -1,6 +1,6 @@
 import pytest
 
-from recipe_graph import build_node_graph, build_nodes
+from totchef.recipe_graph import build_node_graph, build_nodes
 
 
 def graph_for(config: dict) -> dict[str, set[str]]:

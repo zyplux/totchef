@@ -22,8 +22,8 @@ from rich.table import Table
 from rich.text import Text
 from toon_format import encode
 
-import logs
-from logs import log_toon
+from totchef import logs
+from totchef.logs import log_toon
 
 ACTION_STYLES = {
     "installed": "green",

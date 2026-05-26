@@ -10,17 +10,17 @@ from graphlib import TopologicalSorter
 
 from loguru import logger
 
-from cook_base import CookBase, CookResult, ReportRow, StateCook, Status, VersionedCook
-from harness import become_user, stream_subprocess
-from logs import cook_context
-from recipe_graph import (
+from totchef.cook_base import CookBase, CookResult, ReportRow, StateCook, Status, VersionedCook
+from totchef.harness import become_user, stream_subprocess
+from totchef.logs import cook_context
+from totchef.recipe_graph import (
     Node,
     build_node_graph,
     build_nodes,
     load_cook_class,
     node_slice,
 )
-from terminal import progress_region
+from totchef.terminal import progress_region
 
 STATUS_RANK: dict[Status, int] = {"ok": 0, "soft_fail": 1, "hard_fail": 2}
 

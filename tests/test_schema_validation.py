@@ -1,7 +1,7 @@
 import pytest
 
-from recipe_graph import build_nodes
-from schema_lint import find_schema_problems
+from totchef.recipe_graph import build_nodes
+from totchef.schema_lint import find_schema_problems
 
 
 def problems_for(config: dict) -> list[str]:

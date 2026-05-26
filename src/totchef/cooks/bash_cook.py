@@ -4,8 +4,8 @@ import subprocess
 
 from loguru import logger
 
-from cook_base import StateChangeOutcome, StateCook, StateEntrySpec
-from harness import stream_subprocess
+from totchef.cook_base import StateChangeOutcome, StateCook, StateEntrySpec
+from totchef.harness import stream_subprocess
 
 
 class BashEntry(StateEntrySpec):

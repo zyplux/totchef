@@ -6,8 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from cook_base import StateChangeOutcome, StateCook, StateEntrySpec
-from harness import fetch_url, run, write_if_changed
+from totchef.cook_base import StateChangeOutcome, StateCook, StateEntrySpec
+from totchef.harness import fetch_url, run, write_if_changed
 
 
 class AptRepoEntry(StateEntrySpec):

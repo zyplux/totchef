@@ -1,13 +1,11 @@
-"""StateCook for [file.<name>] — install a file with exact content (inline or from src/files/), diffed by content hash so a `post_hook` fires only on change. Privilege-agnostic; recipe.toml grants root per entry."""
+"""StateCook for [file.<name>] — install a file with exact content (inline or bundled under totchef/files/), diffed by content hash so a `post_hook` fires only on change. Privilege-agnostic; recipe.toml grants root per entry."""
 
 from pathlib import Path
 
 from pydantic import model_validator
 
-from cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec
-from harness import SRC_DIR, write_if_changed
-
-FILES_DIR = SRC_DIR / "files"
+from totchef.cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec
+from totchef.harness import FILES_DIR, write_if_changed
 
 
 class FileEntry(StateEntrySpec):

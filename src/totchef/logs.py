@@ -14,8 +14,14 @@ from typing import TextIO
 from loguru import logger
 from toon_format import encode
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-LOG_DIR = REPO_ROOT / "logs"
+
+def log_dir() -> Path:
+    """Per-run logs under the invoking user's XDG state dir (~/.local/state/totchef/logs) — resolved from SUDO_USER so a root re-exec still writes to the user's home, not /root."""
+    sudo_user = os.environ.get("SUDO_USER")
+    home = Path(pwd.getpwnam(sudo_user).pw_dir) if sudo_user else Path.home()
+    state = Path(os.environ["XDG_STATE_HOME"]) if os.environ.get("XDG_STATE_HOME") else home / ".local" / "state"
+    return state / "totchef" / "logs"
+
 
 # The runner column names who is speaking: "chef" for the orchestrator's own
 # lines, the node id (e.g. url.bun, apt_pkg) while a cook runs — see cook_context.
@@ -24,7 +30,7 @@ DEFAULT_RUNNER = Path(sys.argv[0]).stem
 
 LOG_FORMAT = "[{time:YYYY-MM-DD HH:mm:ss}] {extra[runner]: <28} {level: <7} {message}"
 
-SHARED_LOG_ENV = "SYS_CONF_PY_LOG_FILE"
+SHARED_LOG_ENV = "TOTCHEF_LOG_FILE"
 
 # A dup of the real stdout, saved before start_logging redirects fd 1/2 into the
 # log pipe. terminal.py renders rich tables/progress bars here so they reach the
@@ -109,17 +115,18 @@ def drain_logs(timeout: float = 5.0) -> None:
 def start_logging(echo_to_terminal: bool = True) -> Path:
     """Open logs/<run>.log and start the pump (redirect fd 1/2 into a pipe one thread reads); honor SHARED_LOG_ENV or create a timestamped file, chowned to SUDO_USER."""
     set_terminal_echo(echo_to_terminal)
-    LOG_DIR.mkdir(exist_ok=True)
+    directory = log_dir()
+    directory.mkdir(parents=True, exist_ok=True)
     if existing := os.environ.get(SHARED_LOG_ENV):
         log_file = Path(existing)
     else:
-        log_file = LOG_DIR / f"sys-conf-py-{datetime.now():%Y%m%d-%H%M%S}.log"
+        log_file = directory / f"totchef-{datetime.now():%Y%m%d-%H%M%S}.log"
         os.environ[SHARED_LOG_ENV] = str(log_file)
     log_file.touch(exist_ok=True)
     if sudo_user := os.environ.get("SUDO_USER"):
         pw = pwd.getpwnam(sudo_user)
-        os.chown(LOG_DIR, pw.pw_uid, pw.pw_gid)
-        os.chown(log_file, pw.pw_uid, pw.pw_gid)
+        for path in (directory.parent, directory, log_file):
+            os.chown(path, pw.pw_uid, pw.pw_gid)
 
     global TERMINAL_FD, LOG_HANDLE, LOG_PIPE_WRITE
     if TERMINAL_FD is None:

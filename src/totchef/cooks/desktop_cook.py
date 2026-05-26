@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec, chain_hooks
-from harness import logger, write_if_changed
+from totchef.cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec, chain_hooks
+from totchef.harness import logger, write_if_changed
 
 # Refresh KDE's ksycoca so the launcher stops spawning apps with the stale Exec
 # line; tolerant of non-KDE systems where kbuildsycoca6 is absent.
