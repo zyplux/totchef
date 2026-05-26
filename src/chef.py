@@ -79,7 +79,8 @@ def main(
         logger.info(f"{RECIPE_TOML.name}: valid")
         return
 
-    ensure_root()
+    if not dry_run:
+        ensure_root()
     start_logging()
 
     with RECIPE_TOML.open("rb") as f:

@@ -25,7 +25,12 @@ def become_user() -> None:
     """The one privilege-drop chokepoint, called by each forked user-scope cook
     before it works. Drops gid first (root can't set gid after dropping uid),
     reconstructs supplementary groups, then drops uid, and repoints HOME / USER /
-    PATH at the invoking user so toolchains write into $HOME, not /root."""
+    PATH at the invoking user so toolchains write into $HOME, not /root.
+
+    A dry-run (`just plan`) runs unprivileged with no sudo, so there is nothing
+    to drop — return early before touching SUDO_USER or the setgid/setuid path."""
+    if os.geteuid() != 0:
+        return
     sudo_user = os.environ.get("SUDO_USER")
     if not sudo_user:
         sys.exit("ERROR: SUDO_USER not set; chef must be launched via sudo.")
