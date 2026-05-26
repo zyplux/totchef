@@ -16,6 +16,7 @@ from cook_runner import (
     build_dependents,
     build_reach,
     build_weights,
+    format_duration,
     format_queueing,
     format_state,
     format_unlocked,
@@ -53,12 +54,23 @@ def test_format_state_hides_content_digest_as_present():
     assert format_state("configured") == "configured"
 
 
+def test_format_duration_steps_up_at_each_natural_boundary():
+    assert format_duration(0.001234) == "0.001234s"
+    assert format_duration(4.213) == "4.213s"
+    assert format_duration(59.99) == "59.99s"
+    assert format_duration(60) == "1m 0s"
+    assert format_duration(132.456) == "2m 12s"
+    assert format_duration(3600) == "1h 0m"
+    assert format_duration(3661) == "1h 1m"
+    assert format_duration(86400) == "1d 0h"
+    assert format_duration(90061) == "1d 1h"
+    assert format_duration(36_000_000) == "416d 16h"
+
+
 # --- run_versioned ---
 
 
 class FakeVersioned(VersionedCook):
-    manager = "fake"
-
     def __init__(self, requested, before, after, latest, outcome=SyncOutcome("ok")):
         self._requested = requested
         self._before = before
@@ -135,8 +147,6 @@ def test_run_versioned_marks_absent_after_hard_fail_as_failed():
 
 
 class FakeState(StateCook):
-    manager = "fake"
-
     def __init__(self, current, desired, outcomes=None, hooks=None):
         self._current = current
         self._desired = desired
@@ -181,8 +191,18 @@ def test_run_state_applies_only_drifted_resources():
     )
     rows = {r.name: r for r in run_state(cook, "sec", dry_run=False).rows}
     assert cook.applied == ["drift"]
-    assert rows["drift"].action == "changed"
+    assert rows["drift"].action == "applied"  # past-tense mirror of the plan's "would apply"
     assert rows["ok"].action == "unchanged"
+
+
+def test_run_state_end_report_mirrors_plan_columns():
+    # A drifting digest reads "stale" and the desired state fills `latest` in the
+    # end report exactly as in the plan — only the action verb shifts to past tense.
+    cook = FakeState(current={"edit": HEX}, desired={"edit": HEX2})
+    end = {r.name: r for r in run_state(cook, "sec", dry_run=False).rows}["edit"]
+    plan = {r.name: r for r in run_state(cook, "sec", dry_run=True).rows}["edit"]
+    assert (end.installed, end.latest) == (plan.installed, plan.latest) == ("stale", "present")
+    assert (plan.action, end.action) == ("would apply", "applied")
 
 
 def test_run_state_skips_when_pre_hook_is_not_satisfied(monkeypatch):
@@ -329,8 +349,8 @@ def test_start_line_queueing_leads_with_deduplicated_combined_weight(monkeypatch
 
 def test_completion_success_with_no_dependants_is_bare(monkeypatch):
     lines = recording_logger(monkeypatch)
-    log_completion("cargo", CookResult("cargo", "ok", []), (), {}, {})
-    assert lines[0] == "completed with success"
+    log_completion("cargo", CookResult("cargo", "ok", []), (), {}, {}, 4.213)
+    assert lines[0] == "completed (4.213s)"
 
 
 def test_completion_failure_blocks_dependants(monkeypatch):
@@ -341,8 +361,9 @@ def test_completion_failure_blocks_dependants(monkeypatch):
         ("cargo",),
         {"cargo": 1},
         {"cargo": 1},
+        0.5072,
     )
-    assert lines[0] == "completed with failure: boom; blocked: cargo"
+    assert lines[0] == "completed with failure (0.5072s): boom; blocked: cargo"
 
 
 def test_completion_success_carries_unlock_tally(monkeypatch):
@@ -353,8 +374,9 @@ def test_completion_success_carries_unlock_tally(monkeypatch):
         ("apt_pkg",),
         {"apt_pkg": 7},
         {"apt_pkg": 7},
+        1.234,
     )
-    assert lines[0] == "completed with success; unlocked: apt_pkg (7/7)"
+    assert lines[0] == "completed (1.234s); unlocked: apt_pkg (7/7)"
 
 
 # --- format_unlocked (shared-dependency tally) ---

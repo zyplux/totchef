@@ -29,7 +29,6 @@ class ChromiumFlagsEntry(StateEntrySpec):
 
 
 class ChromiumFlagsCook(FileStateCook[ChromiumFlagsEntry]):
-    manager = "chromium-flags"
     entry_model = ChromiumFlagsEntry
     _unrendered_label = "(no base file)"
 

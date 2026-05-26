@@ -13,7 +13,6 @@ class SettingsEntry(StateEntrySpec):
 
 
 class SettingsCook(FileStateCook[SettingsEntry]):
-    manager = "settings"
     entry_model = SettingsEntry
     _unrendered_label = "invalid-json"
 

@@ -24,7 +24,6 @@ class FileEntry(StateEntrySpec):
 
 
 class FileCook(FileStateCook[FileEntry]):
-    manager = "file"
     entry_model = FileEntry
 
     def _target_path(self, name: str) -> Path:

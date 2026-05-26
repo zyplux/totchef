@@ -1,12 +1,25 @@
 """VersionedCook for [cargo] — crates via a single batched `cargo binstall` that does its own per-crate skip-if-current, bootstrapping cargo-binstall once. Runs as the invoking user; depends on [url]."""
 
+import json
 import subprocess
 from pathlib import Path
 
 from loguru import logger
 
 from cook_base import PackageListCook, SyncOutcome
-from harness import find_binary, stream_subprocess
+from harness import fetch_latest_concurrent, fetch_url, find_binary, stream_subprocess
+
+CRATES_API = "https://crates.io/api/v1/crates/{name}"
+
+
+def parse_crates_latest(payload: bytes) -> str | None:
+    """Latest version from the crates.io crate endpoint, preferring `max_stable_version` over a pre-release `newest_version`."""
+    crate = json.loads(payload)["crate"]
+    return crate.get("max_stable_version") or crate.get("newest_version")
+
+
+def fetch_crates_latest(name: str) -> str | None:
+    return parse_crates_latest(fetch_url(CRATES_API.format(name=name)))
 
 
 def parse_crate_list(output: str) -> dict[str, str]:
@@ -30,10 +43,11 @@ def parse_installed_crates() -> dict[str, str]:
 
 
 class CargoCook(PackageListCook):
-    manager = "cargo-binstall"
-
     def list_installed(self) -> dict[str, str]:
         return parse_installed_crates()
+
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
+        return fetch_latest_concurrent(names, fetch_crates_latest)
 
     def _ensure_binstall(self) -> Path | None:
         if binstall := find_binary("cargo-binstall"):

@@ -4,6 +4,7 @@ import os
 import pickle
 import pwd
 import re
+import time
 import traceback
 from graphlib import TopologicalSorter
 
@@ -40,6 +41,20 @@ CONTENT_DIGEST = re.compile(r"[0-9a-f]{64}")
 def format_state(token: str) -> str:
     """Render a diff token for the report: a sha256 digest as 'present', else as-is."""
     return "present" if CONTENT_DIGEST.fullmatch(token) else token
+
+
+def format_duration(seconds: float) -> str:
+    """A wall-clock duration in its natural unit, stepping up at each calendar boundary: fractional seconds (4 sig figs) under a minute, then whole minutes+seconds, hours+minutes past an hour, days+hours past a day."""
+    if seconds < 60:
+        return f"{seconds:.4g}s" if seconds >= 1e-4 else "0s"
+    minutes, sec = int(seconds // 60), int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m {sec}s"
+    hours, minutes = minutes // 60, minutes % 60
+    if hours < 24:
+        return f"{hours}h {minutes}m"
+    days, hours = hours // 24, hours % 24
+    return f"{days}d {hours}h"
 
 
 def run_pre_hook(snippet: str) -> bool:
@@ -83,7 +98,6 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
             rows.append(
                 ReportRow(
                     name,
-                    cook.manager,
                     installed or "(none)",
                     format_version(available),
                     action,
@@ -115,7 +129,6 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
         rows.append(
             ReportRow(
                 name,
-                cook.manager,
                 before or "(none)",
                 format_version(latest.get(name)),
                 action,
@@ -131,34 +144,30 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
     desired = cook.get_desired_state()
     to_apply = [n for n in resources if current.get(n) != desired.get(n)]
 
+    def labels(name: str) -> tuple[str, str]:
+        """The shared `current`/`latest` cells: pre-run state (a drifting digest reads 'stale') and the desired state, so the plan and the end report fill the same columns."""
+        current_token = current.get(name, "?")
+        current_label = "stale" if name in to_apply and CONTENT_DIGEST.fullmatch(current_token) else format_state(current_token)
+        return current_label, format_state(desired.get(name, "?"))
+
     rows: list[ReportRow] = []
     if dry_run:
         for name in resources:
+            current_label, desired_label = labels(name)
             will = name in to_apply
-            current_token = current.get(name, "?")
-            current_label = "stale" if will and CONTENT_DIGEST.fullmatch(current_token) else format_state(current_token)
-            rows.append(
-                ReportRow(
-                    name,
-                    cook.manager,
-                    current_label,
-                    format_state(desired.get(name, "?")),
-                    "would apply" if will else "ok",
-                    will,
-                )
-            )
+            rows.append(ReportRow(name, current_label, desired_label, "would apply" if will else "ok", will))
         return CookResult(section, "ok", rows)
 
     statuses: list[Status] = []
     for name in resources:
-        before = format_state(current.get(name, "?"))
+        current_label, desired_label = labels(name)
         if name not in to_apply:
-            rows.append(ReportRow(name, cook.manager, before, "—", "unchanged", False))
+            rows.append(ReportRow(name, current_label, desired_label, "unchanged", False))
             continue
 
         pre_hook, post_hook = cook.get_hooks(name)
         if pre_hook and not run_pre_hook(pre_hook):
-            rows.append(ReportRow(name, cook.manager, before, "—", "skipped", False))
+            rows.append(ReportRow(name, current_label, desired_label, "skipped", False))
             continue
 
         outcome = cook.apply_resource(name)
@@ -174,11 +183,11 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
         elif status == "soft_fail":
             action = "post-failed"
         elif outcome.changed:
-            action = "changed"
+            action = "applied"
         else:
             action = "unchanged"
         statuses.append(status)
-        rows.append(ReportRow(name, cook.manager, before, "—", action, outcome.changed, status))
+        rows.append(ReportRow(name, current_label, desired_label, action, outcome.changed, status))
 
     return CookResult(section, pick_worst_status(statuses), rows)
 
@@ -321,16 +330,18 @@ def log_completion(
     dependants: tuple[str, ...],
     satisfied: dict[str, int],
     blocker_count: dict[str, int],
+    elapsed: float,
 ) -> None:
-    """Emit a cook's completion line parent-side: success unlocks dependants, failure blocks them."""
+    """Emit a cook's completion line parent-side, timed from fork to reap: success unlocks dependants, failure blocks them."""
     with cook_context(node_id):
+        timing = f"({format_duration(elapsed)})"
         if result.status == "ok":
-            logger.info(f"completed with success{format_unlocked(dependants, satisfied, blocker_count)}")
+            logger.info(f"completed {timing}{format_unlocked(dependants, satisfied, blocker_count)}")
         else:
             blocked = f"; blocked: {', '.join(dependants)}" if dependants else ""
             message = result.message or "see log above"
             emit = logger.warning if result.status == "soft_fail" else logger.error
-            emit(f"completed with failure: {message}{blocked}")
+            emit(f"completed with failure {timing}: {message}{blocked}")
 
 
 def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
@@ -346,6 +357,7 @@ def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
     sorter.prepare()
     results: dict[str, CookResult] = {}
     running: dict[int, tuple[str, int]] = {}
+    started_at: dict[str, float] = {}
     pending_root: list[str] = []
     root_pid: int | None = None
     abort = False
@@ -353,7 +365,8 @@ def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
     def settle(done_id: str, result: CookResult) -> None:
         for dependant in dependents[done_id]:
             satisfied[dependant] += 1
-        log_completion(done_id, result, dependents[done_id], satisfied, blocker_count)
+        elapsed = time.monotonic() - started_at.get(done_id, time.monotonic())
+        log_completion(done_id, result, dependents[done_id], satisfied, blocker_count, elapsed)
 
     with progress_region("Cooking", total=len(nodes)) as bar:
         while sorter.is_active() and not abort:
@@ -364,11 +377,13 @@ def run_recipe(config: dict, dry_run: bool) -> dict[str, CookResult]:
                 else:
                     pid, read_fd = fork_cook(nodes[node_id], config, dry_run, dependents, reach, weights)
                     running[pid] = (node_id, read_fd)
+                    started_at[node_id] = time.monotonic()
             if root_pid is None and pending_root:
                 pending_root.sort(key=lambda n: reach[n])
                 node_id = pending_root.pop()
                 root_pid, read_fd = fork_cook(nodes[node_id], config, dry_run, dependents, reach, weights)
                 running[root_pid] = (node_id, read_fd)
+                started_at[node_id] = time.monotonic()
             if not running:
                 break
             pid, exit_status = os.waitpid(-1, 0)

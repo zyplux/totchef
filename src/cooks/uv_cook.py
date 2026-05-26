@@ -1,5 +1,6 @@
 """VersionedCook for [uv] — Python CLI tools in isolated venvs via `uv tool install`/`upgrade`, run concurrently behind uv's own locks. Runs as the invoking user; depends on [url]."""
 
+import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -7,7 +8,18 @@ from pathlib import Path
 from loguru import logger
 
 from cook_base import PackageListCook, SyncOutcome
-from harness import find_binary, stream_subprocess
+from harness import fetch_latest_concurrent, fetch_url, find_binary, stream_subprocess
+
+PYPI_JSON = "https://pypi.org/pypi/{name}/json"
+
+
+def parse_pypi_latest(payload: bytes) -> str | None:
+    """Latest version from PyPI's per-project JSON (the `info.version` field is the newest release)."""
+    return json.loads(payload)["info"]["version"]
+
+
+def fetch_pypi_latest(name: str) -> str | None:
+    return parse_pypi_latest(fetch_url(PYPI_JSON.format(name=name)))
 
 
 def parse_tool_list(output: str) -> dict[str, str]:
@@ -32,11 +44,12 @@ def parse_tool_versions(uv: Path) -> dict[str, str]:
 
 
 class UvCook(PackageListCook):
-    manager = "uv"
-
     def list_installed(self) -> dict[str, str]:
         uv = find_binary("uv")
         return parse_tool_versions(uv) if uv else {}
+
+    def find_latest(self, names: list[str]) -> dict[str, str | None]:
+        return fetch_latest_concurrent(names, fetch_pypi_latest)
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         work = [("install", n) for n in to_install] + [("upgrade", n) for n in to_upgrade]

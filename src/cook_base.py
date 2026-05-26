@@ -57,7 +57,6 @@ class ReportRow:
     """One row of the end-of-run report, assembled by chef."""
 
     name: str
-    manager: str
     installed: str
     latest: str
     action: str
@@ -76,10 +75,9 @@ class CookResult:
 
 
 class CookBase:
-    """Base for every cook; subclasses set `manager`, and an always-root `<section>_root_cook.py` sets `needs_root = True` (else least privilege)."""
+    """Base for every cook; an always-root `<section>_root_cook.py` sets `needs_root = True` (else least privilege)."""
 
     needs_root: bool = False
-    manager: str = ""
     entry_model: ClassVar[type[EntrySpec] | None] = None
 
     def __init__(self, section: dict) -> None:

@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -138,3 +140,20 @@ def fetch_url(url: str) -> bytes:
     request = Request(url, headers={"User-Agent": USER_AGENT})
     with urlopen(request) as response:
         return response.read()
+
+
+def fetch_latest_concurrent(names: list[str], fetch_one: Callable[[str], str | None]) -> dict[str, str | None]:
+    """Map each name to its upstream latest via fetch_one, run concurrently for a probe pass; a fetch that raises yields None so the caller falls back to 'unknown latest' rather than failing the run."""
+    if not names:
+        return {}
+    latest: dict[str, str | None] = {}
+    with ThreadPoolExecutor(max_workers=len(names)) as pool:
+        pending = {pool.submit(fetch_one, name): name for name in names}
+        for future in as_completed(pending):
+            name = pending[future]
+            try:
+                latest[name] = future.result()
+            except Exception as exc:
+                logger.debug(f"latest lookup for {name} failed: {exc}")
+                latest[name] = None
+    return latest

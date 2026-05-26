@@ -1,9 +1,10 @@
 """Pure parsers over external CLI output, pinning the column/format assumptions that break silently (a mis-read version, not a crash) when a tool reformats."""
 
 from cooks.apt_pkg_root_cook import parse_policy
-from cooks.cargo_cook import parse_crate_list
-from cooks.snap_root_cook import parse_snap_list
-from cooks.uv_cook import parse_tool_list
+from cooks.cargo_cook import parse_crate_list, parse_crates_latest
+from cooks.snap_root_cook import parse_refresh_list, parse_snap_list
+from cooks.url_cook import parse_version
+from cooks.uv_cook import parse_pypi_latest, parse_tool_list
 
 # --- parse_snap_list ---
 
@@ -31,6 +32,60 @@ def test_parse_snap_list_skips_header_and_blank_lines():
 
 def test_parse_snap_list_nameless_line_is_unknown_version():
     assert parse_snap_list("loner\n") == {"loner": "unknown"}
+
+
+# --- parse_refresh_list ---
+
+REFRESH_LIST = "\n".join(
+    [
+        "Name         Version        Rev   Size   Publisher    Notes",
+        "thunderbird  140.11.0esr-1  1117  239MB  canonical**  -",
+        "chromium     148.0.7778.99  2999  180MB  canonical**  -",
+    ]
+)
+
+
+def test_parse_refresh_list_maps_name_to_available_version():
+    assert parse_refresh_list(REFRESH_LIST) == {
+        "thunderbird": "140.11.0esr-1",
+        "chromium": "148.0.7778.99",
+    }
+
+
+def test_parse_refresh_list_ignores_all_up_to_date_message():
+    # No header line => nothing is a row, so the message isn't misread as a snap.
+    assert parse_refresh_list("All snaps up to date.\n") == {}
+
+
+# --- parse_version (vendor --version output) ---
+
+
+def test_parse_version_extracts_dotted_version_from_varied_formats():
+    assert parse_version("rustup 1.29.0 (28d1352db 2026-03-05)") == "1.29.0"
+    assert parse_version("uv 0.11.16 (x86_64-unknown-linux-gnu)") == "0.11.16"
+    assert parse_version("1.3.14") == "1.3.14"
+    assert parse_version("2.1.150 (Claude Code)") == "2.1.150"
+
+
+def test_parse_version_falls_back_to_present_without_a_match():
+    assert parse_version("some banner with no number") == "present"
+
+
+# --- parse_pypi_latest / parse_crates_latest (HTTP JSON bodies) ---
+
+
+def test_parse_pypi_latest_reads_info_version():
+    assert parse_pypi_latest(b'{"info": {"version": "0.15.14"}}') == "0.15.14"
+
+
+def test_parse_crates_latest_prefers_max_stable_over_newest():
+    body = b'{"crate": {"max_stable_version": "1.51.0", "newest_version": "1.52.0-rc.1"}}'
+    assert parse_crates_latest(body) == "1.51.0"
+
+
+def test_parse_crates_latest_falls_back_to_newest_when_no_stable():
+    body = b'{"crate": {"max_stable_version": null, "newest_version": "0.1.0-beta"}}'
+    assert parse_crates_latest(body) == "0.1.0-beta"
 
 
 # --- parse_crate_list ---
