@@ -45,6 +45,10 @@ DRAIN_EVENTS: dict[str, threading.Event] = {}
 # terminal import cycle.
 LINE_SINK: Callable[[str], None] | None = None
 
+# Whether the pump also mirrors log lines to the terminal. Dry-run turns this off
+# so `just plan` shows only the report table; the log file still records every line.
+ECHO_LOGS_TO_TERMINAL = True
+
 # Configured at import so pre-sudo messages get timestamped too.
 logger.remove()
 logger.configure(extra={"runner": DEFAULT_RUNNER})
@@ -70,8 +74,14 @@ def write_log(text: str) -> None:
         LOG_HANDLE.flush()
 
 
+def set_terminal_echo(enabled: bool) -> None:
+    """Toggle whether the pump mirrors log lines to the terminal; the log file is written either way."""
+    global ECHO_LOGS_TO_TERMINAL
+    ECHO_LOGS_TO_TERMINAL = enabled
+
+
 def _emit_terminal(line: str) -> None:
-    if LINE_SINK is not None:
+    if ECHO_LOGS_TO_TERMINAL and LINE_SINK is not None:
         LINE_SINK(line)
 
 
@@ -96,8 +106,9 @@ def drain_logs(timeout: float = 5.0) -> None:
     event.wait(timeout)
 
 
-def start_logging() -> Path:
+def start_logging(echo_to_terminal: bool = True) -> Path:
     """Open logs/<run>.log and start the pump (redirect fd 1/2 into a pipe one thread reads); honor SHARED_LOG_ENV or create a timestamped file, chowned to SUDO_USER."""
+    set_terminal_echo(echo_to_terminal)
     LOG_DIR.mkdir(exist_ok=True)
     if existing := os.environ.get(SHARED_LOG_ENV):
         log_file = Path(existing)

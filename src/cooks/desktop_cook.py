@@ -56,7 +56,6 @@ class DesktopEntry(StateEntrySpec):
 
 
 class DesktopCook(FileStateCook[DesktopEntry]):
-    manager = "desktop"
     entry_model = DesktopEntry
     _unrendered_label = "(no source)"
 

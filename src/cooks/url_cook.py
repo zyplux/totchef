@@ -1,5 +1,6 @@
 """Cook for [url.<name>] — vendor `curl | bash` bootstrappers as a presence-only VersionedCook (install-if-missing / upgrade-if-present); install errors hard, update errors soft. Runs as the invoking user."""
 
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -11,6 +12,24 @@ from cook_base import EntrySpec, SyncOutcome, VersionedCook
 from harness import fetch_url, find_binary, stream_subprocess
 
 RERUN_INSTALLER = "rerun-installer"
+
+VERSION_PATTERN = re.compile(r"\d+\.\d+(?:\.\d+)*")
+
+
+def parse_version(output: str) -> str:
+    """Pull the first dotted version out of a `--version` line; vendors format it freely ('rustup 1.29.0 (…)', '1.3.14', '2.1.150 (Claude Code)'), so fall back to 'present' when nothing matches."""
+    first_line = next((line for line in output.splitlines() if line.strip()), "")
+    match = VERSION_PATTERN.search(first_line)
+    return match.group() if match else "present"
+
+
+def probe_version(bin_path: Path) -> str:
+    """Best-effort installed version of a vendor CLI; presence is what the cook actually diffs, so any probe failure degrades to 'present' rather than raising."""
+    try:
+        completed = subprocess.run([str(bin_path), "--version"], capture_output=True, text=True, timeout=5)
+    except OSError, subprocess.SubprocessError:
+        return "present"
+    return parse_version(completed.stdout or completed.stderr)
 
 
 class UrlEntry(EntrySpec):
@@ -45,7 +64,6 @@ def update_existing(entry: UrlEntry, bin_path: Path) -> None:
 
 
 class UrlCook(VersionedCook):
-    manager = "curl|bash"
     entry_model = UrlEntry
 
     def __init__(self, section: dict) -> None:
@@ -56,7 +74,8 @@ class UrlCook(VersionedCook):
         return list(self.installs)
 
     def list_installed(self) -> dict[str, str]:
-        return {name: "present" for name, entry in self.installs.items() if find_binary(entry.bin or name)}
+        found = {name: find_binary(entry.bin or name) for name, entry in self.installs.items()}
+        return {name: probe_version(path) for name, path in found.items() if path}
 
     def find_latest(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)

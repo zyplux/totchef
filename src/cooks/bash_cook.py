@@ -15,7 +15,6 @@ class BashEntry(StateEntrySpec):
 
 
 class BashCook(StateCook[BashEntry]):
-    manager = "bash"
     entry_model = BashEntry
 
     def get_current_state(self) -> dict[str, str]:

@@ -65,7 +65,6 @@ def build_policy_row(package: str) -> dict:
 
 class AptPkgCook(PackageListCook):
     needs_root = True
-    manager = "apt"
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)

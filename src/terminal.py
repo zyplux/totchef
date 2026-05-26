@@ -1,6 +1,7 @@
 """Terminal presentation: minimalist TOON in the log, rich tables/progress bars on an interactive terminal, all routed through the single Console the log pump feeds."""
 
 import os
+import re
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
@@ -27,7 +28,7 @@ from logs import log_toon
 ACTION_STYLES = {
     "installed": "green",
     "upgraded": "green",
-    "changed": "green",
+    "applied": "green",
     "up-to-date": "dim",
     "unchanged": "dim",
     "ok": "dim",
@@ -42,6 +43,32 @@ ACTION_STYLES = {
 }
 QUIET_ACTIONS = {"up-to-date", "unchanged", "ok"}
 
+LOG_LINE = re.compile(r"^\[([^\]]+)\] (\S+)\s+(\w+)\s+(.*)$", re.DOTALL)
+
+# Distinct hues for the runner column so each cook keeps one color across its
+# interleaved lines; severity stays in the message, so red/yellow/green are left
+# out here to avoid reading a runner's color as a status.
+RUNNER_PALETTE = (
+    "cyan",
+    "magenta",
+    "blue",
+    "bright_cyan",
+    "bright_magenta",
+    "bright_blue",
+    "orange3",
+    "purple",
+    "turquoise2",
+    "deep_pink3",
+    "sky_blue2",
+    "medium_purple",
+    "dodger_blue2",
+    "hot_pink3",
+    "dark_violet",
+    "light_sea_green",
+    "dark_orange3",
+    "slate_blue1",
+)
+
 
 @cache
 def console() -> Console:
@@ -55,24 +82,75 @@ def is_interactive() -> bool:
     return console().is_terminal
 
 
+def _line_style(level: str, message: str) -> str:
+    """The color for a terminal log line, chosen by severity then by what the line announces: errors red, warnings yellow, a cook starting bluish, a success green, else plain."""
+    if level in {"ERROR", "CRITICAL"}:
+        return "bold red"
+    if level == "WARNING":
+        return "bold yellow"
+    if message.startswith("started"):
+        return "cornflower_blue"
+    if message.startswith("completed"):
+        return "green3"
+    return ""
+
+
+_runner_colors: dict[str, str] = {}
+
+
+def _runner_style(runner: str) -> str:
+    """A stable color for a cook's name, assigned from the palette in first-seen order so cooks running together are always distinct hues (the palette repeats only once exhausted) — letting one cook's lines be tracked by color."""
+    if runner not in _runner_colors:
+        _runner_colors[runner] = RUNNER_PALETTE[len(_runner_colors) % len(RUNNER_PALETTE)]
+    return _runner_colors[runner]
+
+
+def _colorize_log_line(line: str) -> Text:
+    """Restyle a pumped log line for the terminal: drop the level column, dim the timestamp, give the runner its per-cook color, and tint the message by what the line reports; an unrecognized line stays plain."""
+    match = LOG_LINE.match(line)
+    if match is None:
+        return Text(line)
+    timestamp, runner, level, message = match.groups()
+    runner_style = _runner_style(runner)
+    text = Text()
+    text.append(f"[{timestamp}] ", style=runner_style)
+    text.append(f"{runner: <28} ", style=runner_style)
+    text.append(message, style=_line_style(level, message))
+    return text
+
+
 def _emit_log_line(line: str) -> None:
-    """The pump's terminal sink: print a pumped log line through the Console so it coordinates with live regions; out() passes output verbatim, no wrap or markup."""
-    console().out(line.rstrip("\n"), highlight=False)
+    """The pump's terminal sink: print a pumped log line through the Console so it coordinates with live regions; soft_wrap keeps long lines unbroken, like out()."""
+    console().print(_colorize_log_line(line.rstrip("\n")), soft_wrap=True)
 
 
 logs.LINE_SINK = _emit_log_line
 
 
-def show_table(rows: list[dict], title: str = "") -> None:
-    """Render rows as a rich table plus TOON in the log file on an interactive terminal; on a non-terminal stdout, emit plain TOON to both."""
+def show_table(rows: list[dict], title: str = "", summary: list[dict] | None = None) -> None:
+    """Render rows as a rich table plus TOON in the log file on an interactive terminal; on a non-terminal stdout, emit plain TOON to both. `summary` rows close the table under a divider."""
+    summary = summary or []
     if not rows or not is_interactive():
-        log_toon(rows, note=title)
+        log_toon(rows + summary, note=title)
         return
-    _render_table(rows, title)
-    _append_toon(rows, title)
+    _render_table(rows, title, summary)
+    _append_toon(rows + summary, title)
 
 
-def _render_table(rows: list[dict], title: str) -> None:
+def _report_cell(column: str, value: str, action: str) -> Text:
+    """Style one report cell as a diff: the verb colors `action`, the target `latest` echoes that verb (the value the action drives toward), and `current` dims as the prior state; the identity column carries its cook's color."""
+    if column == "action":
+        return Text(value, style=ACTION_STYLES.get(value, ""))
+    if column == "latest":
+        return Text(value, style=ACTION_STYLES.get(action, ""))
+    if column == "current":
+        return Text(value, style="dim")
+    if column == "cook-node":
+        return Text(value, style=_runner_style(value))
+    return Text(value)
+
+
+def _render_table(rows: list[dict], title: str, summary: list[dict]) -> None:
     columns = list(rows[0])
     table = Table(
         title=title or None,
@@ -83,9 +161,14 @@ def _render_table(rows: list[dict], title: str) -> None:
     for column in columns:
         table.add_column(column)
     for row in rows:
-        cells = [Text(str(row[column]), style=ACTION_STYLES.get(str(row[column]), "")) if column == "action" else Text(str(row[column])) for column in columns]
-        quiet = str(row.get("action", "")) in QUIET_ACTIONS
+        action = str(row.get("action", ""))
+        cells = [_report_cell(column, str(row[column]), action) for column in columns]
+        quiet = action in QUIET_ACTIONS
         table.add_row(*cells, style="dim" if quiet else "")
+    if summary:
+        table.add_section()
+        for row in summary:
+            table.add_row(*(Text(str(row.get(column, ""))) for column in columns), style="dim")
     console().print(table)
 
 

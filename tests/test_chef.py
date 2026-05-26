@@ -7,11 +7,12 @@ def stub_main_io(monkeypatch):
     """Neutralize everything main does except the ensure_root gate, recording whether it would have escalated."""
     escalated = []
     monkeypatch.setattr(chef, "ensure_root", lambda: escalated.append(True))
-    monkeypatch.setattr(chef, "start_logging", lambda: None)
+    monkeypatch.setattr(chef, "start_logging", lambda echo_to_terminal=True: None)
     monkeypatch.setattr(chef, "drain_logs", lambda: None)
+    monkeypatch.setattr(chef, "set_terminal_echo", lambda enabled: None)
     monkeypatch.setattr(chef, "validate", lambda config: None)
     monkeypatch.setattr(chef, "run_recipe", lambda config, dry_run: {})
-    monkeypatch.setattr(chef, "print_report", lambda results, dry_run: None)
+    monkeypatch.setattr(chef, "print_report", lambda results, dry_run, title="Report", elapsed=None: None)
     return escalated
 
 

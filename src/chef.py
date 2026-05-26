@@ -3,15 +3,16 @@
 
 import os
 import sys
+import time
 import tomllib
 
 import typer
 from loguru import logger
 
 from cook_base import CookResult
-from cook_runner import run_recipe
+from cook_runner import format_duration, run_recipe
 from harness import RECIPE_TOML, SOFT_FAIL_EXIT
-from logs import SHARED_LOG_ENV, drain_logs, start_logging
+from logs import SHARED_LOG_ENV, drain_logs, set_terminal_echo, start_logging
 from schema_lint import validate
 from terminal import show_table
 
@@ -26,33 +27,55 @@ def ensure_root() -> None:
     )
 
 
-def print_report(results: dict[str, CookResult], dry_run: bool) -> None:
-    all_rows = [row for result in results.values() for row in result.rows]
-    changed_rows = [r for r in all_rows if r.changed or r.status != "ok"]
-    shown = all_rows if dry_run else changed_rows
+def cook_node(node_id: str, name: str) -> str:
+    """The report's identity column: the owning cook (recipe section) dotted with the entry, matching the `section.entry` ids in the logs (e.g. `apt_pkg.code`, `url.rustup`)."""
+    return f"{node_id.split('.', 1)[0]}.{name}"
 
-    logger.info("")
+
+def summary_rows(unchanged: int, elapsed: float | None) -> list[dict]:
+    """The report's footer rows (under a divider): how many resources were left untouched and the total wall-clock — empty when there's nothing to total."""
+    if not unchanged and elapsed is None:
+        return []
+    return [
+        {
+            "cook-node": f"{unchanged} unchanged" if unchanged else "elapsed",
+            "current": "",
+            "latest": "",
+            "action": format_duration(elapsed) if elapsed is not None else "",
+        }
+    ]
+
+
+def print_report(results: dict[str, CookResult], dry_run: bool, title: str = "Report", elapsed: float | None = None) -> None:
+    rows = [(result.cook, row) for result in results.values() for row in result.rows]
+    shown = rows if dry_run else [(node_id, row) for node_id, row in rows if row.changed or row.status != "ok"]
+
     if shown:
         show_table(
             [
                 {
-                    "name": r.name,
-                    "mgr": r.manager,
-                    "installed": r.installed,
-                    "latest": r.latest,
-                    "action": r.action,
+                    "cook-node": cook_node(node_id, row.name),
+                    "current": row.installed,
+                    "latest": row.latest,
+                    "action": row.action,
                 }
-                for r in shown
+                for node_id, row in shown
             ],
-            title="Report",
+            title=title,
+            summary=summary_rows(len(rows) - len(shown), elapsed),
         )
     else:
-        logger.info("=== Report: nothing changed ===")
+        suffix = f" ({format_duration(elapsed)})" if elapsed is not None else ""
+        logger.info(f"=== {title}: nothing changed{suffix} ===")
 
-    if not dry_run:
-        unchanged = len(all_rows) - len(changed_rows)
-        if unchanged:
-            logger.info(f"{unchanged} item(s) unchanged. Run with --dry-run for the full inventory.")
+
+def preview_plan(config: dict) -> None:
+    """Before a real run, print the plan table to the terminal from a probe-only pass; the probe's cook logs go to the file only, so the terminal shows just the table."""
+    set_terminal_echo(False)
+    results = run_recipe(config, dry_run=True)
+    drain_logs()
+    set_terminal_echo(True)
+    print_report(results, dry_run=True, title="Plan")
 
 
 def main(
@@ -71,15 +94,20 @@ def main(
 
     if not dry_run:
         ensure_root()
-    start_logging()
+    start_logging(echo_to_terminal=not dry_run)
+    start = time.monotonic()
 
     with RECIPE_TOML.open("rb") as f:
         config = tomllib.load(f)
     validate(config)
 
+    if not dry_run:
+        preview_plan(config)
+
     results = run_recipe(config, dry_run)
     drain_logs()
-    print_report(results, dry_run)
+    set_terminal_echo(True)
+    print_report(results, dry_run, elapsed=time.monotonic() - start)
 
     hard = [r.cook for r in results.values() if r.status == "hard_fail"]
     soft = [r.cook for r in results.values() if r.status == "soft_fail"]

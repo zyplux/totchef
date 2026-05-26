@@ -65,7 +65,6 @@ def configure_repo(name: str, repo: AptRepoEntry, release: str) -> bool:
 
 class AptRepoCook(StateCook[AptRepoEntry]):
     needs_root = True
-    manager = "apt-repo"
     entry_model = AptRepoEntry
 
     def get_current_state(self) -> dict[str, str]:
