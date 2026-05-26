@@ -20,8 +20,7 @@ from recipe_graph import (
 
 
 def find_schema_problems(config: dict, nodes: dict[str, Node]) -> list[str]:
-    """Validate each node's slice against its cook's `entry_model`, collecting every
-    Pydantic error as a readable `[node] loc: message` line (empty list == valid)."""
+    """Validate each node's slice against its cook's `entry_model`, collecting every Pydantic error as a readable `[node] loc: message` line (empty == valid)."""
     problems: list[str] = []
     for node_id, node in nodes.items():
         model = load_cook_class(node.section).entry_model
@@ -37,15 +36,13 @@ def find_schema_problems(config: dict, nodes: dict[str, Node]) -> list[str]:
 
 
 def rule_sections_resolve_to_cooks(nodes: dict[str, Node]) -> None:
-    """Every section names a cook module that imports to exactly one cook class.
-    `load_cook_class` exits with a precise message on a missing or ambiguous one."""
+    """Every section names a cook module that imports to exactly one cook class (load_cook_class exits on a missing or ambiguous one)."""
     for section in {node.section for node in nodes.values()}:
         load_cook_class(section)
 
 
 def rule_dependencies_acyclic(nodes: dict[str, Node]) -> None:
-    """The depends_on graph resolves and topo-sorts. `build_node_graph` exits on an
-    unknown or self dependency; a cycle would otherwise deadlock the schedule."""
+    """The depends_on graph resolves and topo-sorts (build_node_graph exits on an unknown or self dependency; a cycle would deadlock the schedule)."""
     try:
         list(TopologicalSorter(build_node_graph(nodes)).static_order())
     except CycleError as exc:
@@ -53,18 +50,12 @@ def rule_dependencies_acyclic(nodes: dict[str, Node]) -> None:
 
 
 def rule_root_only_on_leaves(config: dict, nodes: dict[str, Node]) -> None:
-    """needs_root grants in-process root, so it must be enabled per leaf, never on a
-    subtable section header — `build_nodes` folds a header's needs_root down as the
-    default for every entry, granting root wholesale instead of case by case. A
-    plain single-node section is itself the leaf, so its needs_root is fine."""
+    """needs_root must be granted per leaf, never on a subtable header — build_nodes folds a header's needs_root onto every entry, granting root wholesale."""
     sections: dict[str, list[Node]] = {}
     for node in nodes.values():
         sections.setdefault(node.section, []).append(node)
     offenders = sorted(
-        section
-        for section, entries in sections.items()
-        if config[section].get("needs_root")
-        and any(entry.entry is not None for entry in entries)
+        section for section, entries in sections.items() if config[section].get("needs_root") and any(entry.entry is not None for entry in entries)
     )
     if offenders:
         named = ", ".join(f"[{section}]" for section in offenders)

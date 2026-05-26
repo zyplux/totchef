@@ -23,15 +23,8 @@ def strip_meta(slice_: dict) -> dict:
 
 
 def merge_section_defaults(section_data: dict, entry: str) -> dict:
-    """Fold a subtable section's own (non-meta, scalar) keys into one entry's slice
-    as defaults: lists union (section defaults the entry extends), everything else
-    overrides (entry wins). Lets a shared list like `features` live once at the
-    section header instead of being repeated in every entry."""
-    defaults = {
-        k: v
-        for k, v in section_data.items()
-        if k not in META_KEYS and not isinstance(v, dict)
-    }
+    """Fold a subtable section's own scalar/list keys into an entry's slice as defaults: lists union (entry extends), everything else the entry overrides."""
+    defaults = {k: v for k, v in section_data.items() if k not in META_KEYS and not isinstance(v, dict)}
     entry_data = strip_meta(section_data[entry])
     merged = {**defaults, **entry_data}
     for key, shared in defaults.items():
@@ -46,36 +39,16 @@ def merge_section_defaults(section_data: dict, entry: str) -> dict:
 
 
 def load_cook_class(section: str) -> type[CookBase]:
-    """Import cooks/<section>_root_cook.py (always-root) or <section>_cook.py
-    (generic), whichever exists, and return its single CookBase subclass."""
-    candidates = [
-        f"cooks.{section}{suffix}"
-        for suffix in ("_root_cook", "_cook")
-        if importlib.util.find_spec(f"cooks.{section}{suffix}") is not None
-    ]
+    """Import cooks/<section>_root_cook.py or <section>_cook.py, whichever exists, and return its single CookBase subclass."""
+    candidates = [f"cooks.{section}{suffix}" for suffix in ("_root_cook", "_cook") if importlib.util.find_spec(f"cooks.{section}{suffix}") is not None]
     if not candidates:
-        sys.exit(
-            f"ERROR: [{section}] -> no cooks/{section}_cook.py "
-            f"or cooks/{section}_root_cook.py."
-        )
+        sys.exit(f"ERROR: [{section}] -> no cooks/{section}_cook.py or cooks/{section}_root_cook.py.")
     if len(candidates) > 1:
-        sys.exit(
-            f"ERROR: [{section}] -> both {' and '.join(candidates)} exist; "
-            "keep exactly one."
-        )
+        sys.exit(f"ERROR: [{section}] -> both {' and '.join(candidates)} exist; keep exactly one.")
     module = importlib.import_module(candidates[0])
-    classes = [
-        obj
-        for obj in vars(module).values()
-        if isinstance(obj, type)
-        and issubclass(obj, CookBase)
-        and obj.__module__ == module.__name__
-    ]
+    classes = [obj for obj in vars(module).values() if isinstance(obj, type) and issubclass(obj, CookBase) and obj.__module__ == module.__name__]
     if len(classes) != 1:
-        sys.exit(
-            f"ERROR: {candidates[0]} must define exactly one cook class, "
-            f"found {len(classes)}: {[c.__name__ for c in classes]}."
-        )
+        sys.exit(f"ERROR: {candidates[0]} must define exactly one cook class, found {len(classes)}: {[c.__name__ for c in classes]}.")
     return classes[0]
 
 
@@ -96,9 +69,7 @@ def build_nodes(config: dict) -> dict[str, Node]:
     for section, data in config.items():
         sec_root = data.get("needs_root", load_cook_class(section).needs_root)
         sec_deps = data.get("depends_on", [])
-        children = {
-            k: v for k, v in data.items() if k not in META_KEYS and isinstance(v, dict)
-        }
+        children = {k: v for k, v in data.items() if k not in META_KEYS and isinstance(v, dict)}
         if children:
             for entry, entry_data in children.items():
                 node_id = f"{section}.{entry}"
@@ -115,12 +86,7 @@ def build_nodes(config: dict) -> dict[str, Node]:
 
 
 def build_node_graph(nodes: dict[str, Node]) -> dict[str, set[str]]:
-    """Resolve each node's `depends_on` to node ids. A dependency names either a
-    node directly — an entry (`url.rustup`, `bash.apt_prereqs`) or a single-node
-    section (`apt_pkg`) — or a whole section (`apt_repo`), which fans out to every
-    node in that section. Name the smallest unit that matches the real need: a
-    section only when you depend on all of it (`apt_pkg` needs every repo),
-    individual entries when you need some (two of the `bash` steps, not all)."""
+    """Resolve each node's `depends_on` to node ids: a dependency names an entry, a single-node section, or a whole section (fanning out to all its nodes)."""
     section_nodes: dict[str, set[str]] = {}
     for node_id, node in nodes.items():
         section_nodes.setdefault(node.section, set()).add(node_id)
@@ -152,8 +118,7 @@ def build_node_graph(nodes: dict[str, Node]) -> dict[str, set[str]]:
 
 
 def node_slice(config: dict, node: "Node") -> dict:
-    """The exact dict a node's cook receives: an entry node gets its merged slice
-    (section defaults folded in), a single-node section gets the section itself."""
+    """The dict a node's cook receives: an entry node gets its merged slice, a single-node section gets the section itself."""
     if node.entry is not None:
         return merge_section_defaults(config[node.section], node.entry)
     return strip_meta(config[node.section])

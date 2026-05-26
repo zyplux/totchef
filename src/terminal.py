@@ -15,9 +15,9 @@ live region redraws below, never corrupting each other.
   loguru path, and progress bars degrade to no-ops (the per-step log lines already
   convey progress).
 
-Drive these from the root/in-process context only (chef, root cooks). A forked
-user cook inherits the fds but must not draw to the terminal — it emits line logs
-(the pump serialises those) and the parent renders after collecting results.
+Drive these only from chef, the scheduler parent. Every cook runs in a forked
+child that inherits the fds but must not draw to the terminal — a cook emits line
+logs (the pump serialises those) and the parent renders after collecting results.
 """
 
 import os
@@ -65,9 +65,7 @@ QUIET_ACTIONS = {"up-to-date", "unchanged", "ok"}
 
 @cache
 def console() -> Console:
-    """rich Console on the saved real-stdout fd, so its is_terminal reflects the
-    actual terminal (or pipe) rather than the log pipe. Duped so the Console owns
-    its handle independently of TERMINAL_FD."""
+    """rich Console on the saved real-stdout fd (duped, owned independently of TERMINAL_FD) so is_terminal reflects the real terminal, not the log pipe."""
     if logs.TERMINAL_FD is None:
         return Console()
     return Console(file=os.fdopen(os.dup(logs.TERMINAL_FD), "w"))
@@ -78,9 +76,7 @@ def is_interactive() -> bool:
 
 
 def _emit_log_line(line: str) -> None:
-    """The pump's terminal sink: print a pumped log line through the Console so it
-    coordinates with any live table/progress region. out() never wraps or parses
-    markup, so arbitrary subprocess output passes through verbatim."""
+    """The pump's terminal sink: print a pumped log line through the Console so it coordinates with live regions; out() passes output verbatim, no wrap or markup."""
     console().out(line.rstrip("\n"), highlight=False)
 
 
@@ -88,8 +84,7 @@ logs.LINE_SINK = _emit_log_line
 
 
 def show_table(rows: list[dict], title: str = "") -> None:
-    """Render rows as a rich table on an interactive terminal and TOON in the log
-    file; on a non-terminal stdout, emit plain TOON to both via the loguru path."""
+    """Render rows as a rich table plus TOON in the log file on an interactive terminal; on a non-terminal stdout, emit plain TOON to both."""
     if not rows or not is_interactive():
         log_toon(rows, note=title)
         return
@@ -108,20 +103,14 @@ def _render_table(rows: list[dict], title: str) -> None:
     for column in columns:
         table.add_column(column)
     for row in rows:
-        cells = [
-            Text(str(row[column]), style=ACTION_STYLES.get(str(row[column]), ""))
-            if column == "action"
-            else Text(str(row[column]))
-            for column in columns
-        ]
+        cells = [Text(str(row[column]), style=ACTION_STYLES.get(str(row[column]), "")) if column == "action" else Text(str(row[column])) for column in columns]
         quiet = str(row.get("action", "")) in QUIET_ACTIONS
         table.add_row(*cells, style="dim" if quiet else "")
     console().print(table)
 
 
 def _append_toon(rows: list[dict], title: str) -> None:
-    """Append the rows as a TOON block to the log file, keeping the file minimalist
-    while the terminal got rich. Shares logs.write_log (one locked file writer)."""
+    """Append rows as a TOON block to the log file (keeping it minimalist while the terminal got rich), via logs.write_log's single locked writer."""
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     head = f"[{stamp}] {title}\n" if title else ""
     logs.write_log(head + encode(rows) + "\n")
@@ -145,8 +134,7 @@ class _LiveProgress(ProgressHandle):
 
 @contextmanager
 def progress_region(description: str, total: int) -> Generator[ProgressHandle]:
-    """A live progress bar on an interactive terminal (transient — cleared on exit,
-    leaving only the logs that scrolled above it); a no-op handle otherwise."""
+    """A live, transient progress bar on an interactive terminal (cleared on exit, leaving the logs above it); a no-op handle otherwise."""
     if not is_interactive():
         yield ProgressHandle()
         return

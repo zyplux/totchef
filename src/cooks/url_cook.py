@@ -49,10 +49,7 @@ def update_existing(entry: UrlEntry, bin_path: Path) -> None:
             note=f"Updating via `{bin_path.name} {' '.join(action)}`",
         )
     else:
-        raise ValueError(
-            f"unrecognized update_action {action!r} "
-            f"(expected an arg list, {RERUN_INSTALLER!r}, or absent)"
-        )
+        raise ValueError(f"unrecognized update_action {action!r} (expected an arg list, {RERUN_INSTALLER!r}, or absent)")
 
 
 class UrlCook(VersionedCook):
@@ -61,19 +58,13 @@ class UrlCook(VersionedCook):
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)
-        self.installs = {
-            name: UrlEntry.model_validate(raw) for name, raw in section.items()
-        }
+        self.installs = {name: UrlEntry.model_validate(raw) for name, raw in section.items()}
 
     def list_requested(self) -> list[str]:
         return list(self.installs)
 
     def list_installed(self) -> dict[str, str]:
-        return {
-            name: "present"
-            for name, entry in self.installs.items()
-            if find_binary(entry.bin or name)
-        }
+        return {name: "present" for name, entry in self.installs.items() if find_binary(entry.bin or name)}
 
     def find_latest(self, names: list[str]) -> dict[str, str | None]:
         return dict.fromkeys(names)
@@ -99,7 +90,5 @@ class UrlCook(VersionedCook):
         try:
             update_existing(entry, existing)
         except subprocess.CalledProcessError as exc:
-            return SyncOutcome(
-                "soft_fail", f"{name} update failed (still installed): {exc}"
-            )
+            return SyncOutcome("soft_fail", f"{name} update failed (still installed): {exc}")
         return SyncOutcome("ok")

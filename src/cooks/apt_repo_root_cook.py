@@ -82,10 +82,7 @@ class AptRepoCook(StateCook[AptRepoEntry]):
     def get_current_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name, repo in self.entries.items():
-            present = (
-                build_keyring_path(name, repo).exists()
-                and build_source_path(name, repo).exists()
-            )
+            present = build_keyring_path(name, repo).exists() and build_source_path(name, repo).exists()
             states[name] = "configured" if present else "absent"
         return states
 

@@ -30,9 +30,7 @@ def main() -> None:
         shutil.rmtree(dest)
 
     depth_args = ["--shallow-exclude", ref] if ref else ["--depth", "1"]
-    subprocess.run(
-        ["git", "clone", *depth_args, "--single-branch", url, str(dest)], check=True
-    )
+    subprocess.run(["git", "clone", *depth_args, "--single-branch", url, str(dest)], check=True)
 
 
 if __name__ == "__main__":

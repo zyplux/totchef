@@ -38,9 +38,7 @@ class BashCook(StateCook[BashEntry]):
             if not entry.current_state:
                 states[name] = "(no check)"
                 continue
-            completed = subprocess.run(
-                ["bash", "-c", entry.current_state], capture_output=True, text=True
-            )
+            completed = subprocess.run(["bash", "-c", entry.current_state], capture_output=True, text=True)
             states[name] = completed.stdout.strip() or "(empty)"
         return states
 

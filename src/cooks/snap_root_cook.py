@@ -27,9 +27,7 @@ from harness import stream_subprocess
 
 
 def parse_snap_list(output: str) -> dict[str, str]:
-    """Map snap name -> version from `snap list` output. The first line is a header
-    (`Name  Version  Rev  …`); every other line carries the name in column 0
-    and the version in column 1."""
+    """Map snap name -> version from `snap list`: skip the header line, take column 0 (name) and column 1 (version) of the rest."""
     versions: dict[str, str] = {}
     for line in output.splitlines():
         if not line or line.startswith("Name"):
@@ -40,9 +38,7 @@ def parse_snap_list(output: str) -> dict[str, str]:
 
 
 def parse_installed_snaps() -> dict[str, str]:
-    completed = subprocess.run(
-        ["snap", "list"], capture_output=True, text=True, check=True
-    )
+    completed = subprocess.run(["snap", "list"], capture_output=True, text=True, check=True)
     return parse_snap_list(completed.stdout)
 
 
@@ -54,15 +50,11 @@ class SnapCook(PackageListCook):
         return parse_installed_snaps() if shutil.which("snap") else {}
 
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
-        work = [("install", n) for n in to_install] + [
-            ("refresh", n) for n in to_upgrade
-        ]
+        work = [("install", n) for n in to_install] + [("refresh", n) for n in to_upgrade]
         if not work:
             return SyncOutcome("ok")
         if shutil.which("snap") is None:
-            return SyncOutcome(
-                "hard_fail", "snapd is not installed; cannot manage snaps."
-            )
+            return SyncOutcome("hard_fail", "snapd is not installed; cannot manage snaps.")
 
         tag_width = max(len(name) for _, name in work)
         install_failures: list[str] = []
@@ -75,14 +67,10 @@ class SnapCook(PackageListCook):
                     note="Installing" if verb == "install" else "Refreshing",
                 )
             except subprocess.CalledProcessError:
-                (install_failures if verb == "install" else refresh_failures).append(
-                    name
-                )
+                (install_failures if verb == "install" else refresh_failures).append(name)
 
         if install_failures:
-            return SyncOutcome(
-                "hard_fail", f"snap install failed: {', '.join(install_failures)}"
-            )
+            return SyncOutcome("hard_fail", f"snap install failed: {', '.join(install_failures)}")
         if refresh_failures:
             return SyncOutcome(
                 "soft_fail",

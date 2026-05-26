@@ -22,13 +22,7 @@ SOFT_FAIL_EXIT = 75
 
 
 def become_user() -> None:
-    """The one privilege-drop chokepoint, called by each forked user-scope cook
-    before it works. Drops gid first (root can't set gid after dropping uid),
-    reconstructs supplementary groups, then drops uid, and repoints HOME / USER /
-    PATH at the invoking user so toolchains write into $HOME, not /root.
-
-    A dry-run (`just plan`) runs unprivileged with no sudo, so there is nothing
-    to drop — return early before touching SUDO_USER or the setgid/setuid path."""
+    """The privilege-drop chokepoint per forked user cook: drop gid, rebuild groups, drop uid, repoint HOME/USER/PATH at SUDO_USER; a no-op under an unprivileged dry-run."""
     if os.geteuid() != 0:
         return
     sudo_user = os.environ.get("SUDO_USER")
@@ -49,9 +43,7 @@ def become_user() -> None:
     os.environ["PATH"] = f"{bootstrap}:{os.environ.get('PATH', '')}"
 
 
-def run(
-    *cmd: str, note: str = "", check: bool = True, **kwargs
-) -> subprocess.CompletedProcess:
+def run(*cmd: str, note: str = "", check: bool = True, **kwargs) -> subprocess.CompletedProcess:
     if note:
         logger.info(note)
     return subprocess.run(list(cmd), check=check, **kwargs)
@@ -65,10 +57,7 @@ def stream_subprocess(
     stdin: bytes | None = None,
     check: bool = True,
 ) -> None:
-    """Run `cmd`, stream merged stdout/stderr line-by-line through logger.info,
-    optionally tagged per line. Raises CalledProcessError on non-zero unless
-    check=False. TERM=dumb + NO_COLOR + start_new_session suppress ANSI and
-    block /dev/tty bypass; CR-splits become separate log lines."""
+    """Run `cmd`, streaming merged stdout/stderr through logger.info; raises CalledProcessError on non-zero unless check=False; TERM=dumb/NO_COLOR/start_new_session suppress ANSI and /dev/tty bypass."""
     prefix = f"{tag} " if tag else ""
     if note:
         logger.info(f"{prefix}{note}")
@@ -109,9 +98,7 @@ def stream_subprocess(
         raise subprocess.CalledProcessError(exit_code, cmd)
 
 
-def write_if_changed(
-    path: Path, content: bytes | str, mode: int = 0o644, note: str = ""
-) -> bool:
+def write_if_changed(path: Path, content: bytes | str, mode: int = 0o644, note: str = "") -> bool:
     if isinstance(content, str):
         content = content.encode()
     if path.exists() and path.read_bytes() == content:
@@ -125,9 +112,7 @@ def write_if_changed(
 
 
 def bootstrap_bin_dirs() -> tuple[Path, ...]:
-    """Dirs rustup/bun/uv install into before they are on PATH. Resolved from
-    the current $HOME at call time (not import time) so it follows become_user's
-    privilege drop in a forked child."""
+    """Dirs rustup/bun/uv install into before they are on PATH, resolved from $HOME at call time so they follow become_user's drop in a forked child."""
     home = Path.home()
     return (
         home / ".cargo/bin",
@@ -138,9 +123,7 @@ def bootstrap_bin_dirs() -> tuple[Path, ...]:
 
 
 def find_binary(name: str) -> Path | None:
-    """PATH first, then the bootstrap dirs (rustup/bun/uv land there pre-PATH).
-    Only call from user-scope context — the bootstrap dirs follow $HOME, which
-    become_user repoints in the child; calling as root would probe /root."""
+    """Look up a binary on PATH, then the bootstrap dirs; user-scope only, since those dirs follow $HOME which become_user repoints in the child."""
     if found := shutil.which(name):
         return Path(found)
     for d in bootstrap_bin_dirs():
