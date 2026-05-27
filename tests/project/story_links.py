@@ -1,6 +1,4 @@
-"""Links each user-stories.md h3 story header to its section's test file and keeps h4 criterion headers plain; run as a script to refresh the links.
-
-A story header (`### N.M …`) links to the one test file covering section N — a stable target, since file names don't drift the way line numbers do. The h4 criterion headers stay plain text but still track their tests by id (see the meta-tests)."""
+"""Links each h3 story header to its section's test file; h4 criterion headers stay plain but track tests by id. Run as a script to refresh the links."""
 
 import ast
 import re

@@ -1,7 +1,4 @@
-"""Container fixtures for the few stories whose acceptance criterion is real OS state behind a real `sudo` escalation — who owns the files a cook wrote (§6.3.2), who owns the run's log (§7.3.1). The in-process suite runs the chef without forking or sudo, so it cannot observe these; here a real `totchef up` runs as a non-root user inside a throwaway container and the result is read back as the container sees it (`stat -c %U`), so host↔container uid mapping never enters the assertions.
-
-The fixture skips (not fails) when podman is absent, so the suite still runs everywhere; where podman is present it joins the rest of `just test`. The base is `python:3.14-slim-trixie` (Debian), not Ubuntu, on purpose: the privilege drop under test is kernel-level (`setuid`/`setgid`/`chown`/`sudo`) and distro-agnostic. totchef's Ubuntu-specific surface (apt repos/pinning, nala, snap) is exercised in-process under the mocked story suite, not here.
-"""
+"""Container fixtures for §6.3.2/§7.3.1: real OS state behind a real sudo, via `totchef up` in a throwaway container; skipped without podman."""
 
 import base64
 import os

@@ -1,8 +1,4 @@
-"""User stories §3 — Managing packages (versioned domains).
-
-One prose-style test per acceptance criterion in `user-stories.md` §3. Each drives
-the real chef in-process; only the system boundaries (bash, network, host) are faked.
-"""
+"""User stories §3 — Managing packages. One test per §3 criterion on the real chef in-process; only system boundaries (bash, network, host) are faked."""
 
 # A package's `apt-cache policy` output, before and after installation. Priority 500
 # (a real version-table entry) keeps it out of the "not in any repo" fail-fast path.
@@ -30,8 +26,7 @@ def test_3_1_1_apt_pkg_installed_via_nala_full_transaction(recipe, terminal, tot
 
 
 def test_3_1_2_priority_zero_package_fails_fast_with_guidance(recipe, terminal, totchef):
-    """A package with apt-cache policy priority 0 fails fast with guidance (naming,
-    component, or missing [apt_repo])."""
+    """A package with apt-cache policy priority 0 fails fast with guidance (naming, component, or missing [apt_repo])."""
     recipe.declares("apt_pkg", packages=["totally-fake"])
     terminal.arrange("apt-cache policy totally-fake", "totally-fake:\n  Installed: (none)\n  Candidate: (none)\n")
 
@@ -103,8 +98,7 @@ def test_3_2_2_snap_install_failure_hard_refresh_failure_soft(scenario, terminal
 
 
 def test_3_2_3_missing_snapd_is_a_hard_failure(recipe, totchef):
-    """If snapd isn't present, asking to install a snap is a hard failure with a
-    clear message."""
+    """If snapd isn't present, asking to install a snap is a hard failure with a clear message."""
     recipe.declares("snap", packages=["code"])
 
     report = totchef.up()
@@ -117,8 +111,7 @@ def test_3_2_3_missing_snapd_is_a_hard_failure(recipe, totchef):
 
 
 def test_3_3_1_cargo_installs_via_binstall(recipe, terminal, http, totchef, system):
-    """`[cargo]` installs via `cargo binstall` (one batched command that skips
-    already-current crates)."""
+    """`[cargo]` installs via `cargo binstall` (one batched command that skips already-current crates)."""
     recipe.declares("cargo", packages=["ripgrep"])
     system.has("cargo", "cargo-binstall")
     http.arrange("crates.io/api/v1/crates/ripgrep", '{"crate": {"max_stable_version": "14.1.1"}}')
@@ -147,8 +140,7 @@ def test_3_3_2_cargo_binstall_is_bootstrapped_once_if_missing(recipe, terminal, 
 
 
 def test_3_3_3_missing_cargo_fails_hard_pointing_at_url_rustup(recipe, http, totchef):
-    """If cargo is missing the run fails hard, telling the operator the [url] rustup
-    install must run first."""
+    """If cargo is missing the run fails hard, telling the operator the [url] rustup install must run first."""
     recipe.declares("cargo", packages=["ripgrep"])
     http.arrange("crates.io/api/v1/crates/ripgrep", '{"crate": {"max_stable_version": "14.1.1"}}')
 
@@ -225,8 +217,7 @@ def test_3_4_3_uv_requires_uv_and_looks_up_latest_from_pypi(recipe, http, totche
 
 
 def test_3_5_1_url_fetches_installer_pipes_to_bash_diffs_presence(recipe, terminal, http, totchef, system):
-    """`[url.<name>]` fetches an installer URL and pipes it to bash; presence (not
-    version) is diffed."""
+    """`[url.<name>]` fetches an installer URL and pipes it to bash; presence (not version) is diffed."""
     recipe.declares("url", "bun", url="https://bun.sh/install")
     http.arrange("bun.sh/install", "#!/bin/bash\necho installing bun")
     terminal.arrange("bash -s --", effect=lambda: system.has("bun"))

@@ -1,21 +1,4 @@
-"""Meta-test: a story test asserts user-facing behavior through fixtures only.
-
-The prose tests under `tests/stories/` are black-box — they drive totchef the way an
-operator (or, for §8, a cook author writing a drop-in) does, and read back only what is
-user-visible. So a story test file imports nothing: every seam it touches arrives as a
-fixture, and reaching for a production symbol means it has stopped testing the story.
-
-The §7.2/§7.3.2-3 tests (the live progress bar, per-cook log color, the scheduler's
-wait/unlock lines, and the log pump) are the one acknowledged exception: they are driven
-by the forking scheduler and the real file-logging the in-process story framework
-deliberately does not run, and they assert rendering/timing properties a container would
-only make flakier (PTY scraping, concurrency races) — so they stay white-box. The OS-state
-half of the same boundary — who owns the files a cook wrote (§6.3.2) and the run's log
-(§7.3.1) — is deterministic and genuinely unobservable in-process, so it runs a real
-`totchef up` in a container via the `apply_in_container` fixture: still zero-import, since
-the seam arrives as a fixture like every other. This exception is pinned below so the set
-cannot quietly grow.
-"""
+"""Meta-test: story tests assert behavior through fixtures only, zero imports; §7.2/§7.3.2-3 white-box and §6.3.2/§7.3.1 container are pinned exceptions."""
 
 import ast
 

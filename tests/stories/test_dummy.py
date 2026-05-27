@@ -1,17 +1,4 @@
-"""Dummy test demonstrating the prose style — delete once real stories land.
-
-Note there are no imports: a test names the fixtures it needs (`recipe`, `terminal`,
-`http`, `home`, `totchef`) and reads as the user story it covers. The only things
-faked are the system boundaries (bash, network, home).
-
-Every check is self-labelled:
-- `expect_…` verifies what the system did at a mocked boundary (commands run, URLs
-  fetched) — `terminal.expect_ran`, `terminal.expect_not_ran`, `http.expect_fetched`.
-- `assert_…` (and the `assert` keyword) verifies real produced outcome/state — the
-  report's actions, files on disk.
-Arrange-only setup (`recipe.declares`, `terminal.arrange`, `http.arrange`) is not a
-check.
-"""
+"""Dummy test demonstrating the prose style — delete once real stories land; no imports, only system boundaries faked."""
 
 
 def test_plan_previews_a_bash_step_without_running_it(recipe, terminal, totchef):

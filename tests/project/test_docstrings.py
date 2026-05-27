@@ -1,10 +1,10 @@
-"""Production-source hygiene: every docstring in `src` — module, class, function, method — stays one line."""
+"""Source and test hygiene: every docstring under `src` and `tests` — module, class, function, method — stays one line."""
 
 import ast
 
-from project_paths import REPO_ROOT, SRC
+from project_paths import REPO_ROOT, SRC, TESTS
 
-SCANNED_DIRS = (SRC,)
+SCANNED_DIRS = (SRC, TESTS)
 
 type Documentable = ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)

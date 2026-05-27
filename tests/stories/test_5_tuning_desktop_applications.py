@@ -1,9 +1,4 @@
-"""User stories §5 — Tuning desktop applications (per-user domains).
-
-One prose-style test per acceptance criterion in `user-stories.md` §5. These cooks
-edit files under `$HOME` (redirected to a temp dir by the `home` fixture), so the
-reads/writes are real — only the home directory is faked.
-"""
+"""User stories §5 — Tuning desktop apps. One test per §5 criterion; these cooks edit real files under `$HOME` (faked by the `home` fixture)."""
 
 
 def _exec_line(desktop_file) -> str:
@@ -14,8 +9,7 @@ def _exec_line(desktop_file) -> str:
 
 
 def test_5_1_1_desktop_rewrites_exec_line_into_a_user_override(recipe, totchef, home, tmp_path):
-    """`[desktop.<app>]` rewrites a system .desktop Exec= line (env prefix, switches,
-    --enable-features) into ~/.local/share/applications/."""
+    """`[desktop.<app>]` rewrites a system .desktop Exec= line (env prefix, switches, --enable-features) into ~/.local/share/applications/."""
     source = tmp_path / "brave.desktop"
     source.write_text("[Desktop Entry]\nName=Brave\nExec=/usr/bin/brave %U\n")
     recipe.declares("desktop", "brave", desktop=str(source), env={"LIBVA_DRIVER_NAME": "nvidia"}, switches=["use-gl=angle"], features=["VaapiVideoDecoder"])
@@ -31,8 +25,7 @@ def test_5_1_1_desktop_rewrites_exec_line_into_a_user_override(recipe, totchef, 
 
 
 def test_5_1_2_desktop_rewrite_is_idempotent_and_deduplicating(recipe, totchef, home, tmp_path):
-    """Re-applying doesn't stack duplicate flags; a changed switch value is replaced;
-    new args go before trailing field codes."""
+    """Re-applying doesn't stack duplicate flags; a changed switch value is replaced; new args go before trailing field codes."""
     source = tmp_path / "brave.desktop"
     source.write_text("[Desktop Entry]\nExec=env OLD=1 /usr/bin/brave --use-gl=angle %U\n")
     recipe.declares("desktop", "brave", desktop=str(source), switches=["use-gl=egl"], features=["VaapiVideoDecoder"])
@@ -49,8 +42,7 @@ def test_5_1_2_desktop_rewrite_is_idempotent_and_deduplicating(recipe, totchef, 
 
 
 def test_5_1_3_desktop_on_change_refreshes_ksycoca_and_reminds_restart(recipe, terminal, totchef, tmp_path):
-    """On change it refreshes KDE's ksycoca (tolerant of non-KDE) and reminds the
-    operator to restart the app."""
+    """On change it refreshes KDE's ksycoca (tolerant of non-KDE) and reminds the operator to restart the app."""
     source = tmp_path / "brave.desktop"
     source.write_text("[Desktop Entry]\nExec=/usr/bin/brave %U\n")
     recipe.declares("desktop", "brave", desktop=str(source), switches=["use-gl=egl"])
@@ -67,8 +59,7 @@ def test_5_1_3_desktop_on_change_refreshes_ksycoca_and_reminds_restart(recipe, t
 
 
 def test_5_1_4_desktop_missing_source_reports_install_package_first(recipe, totchef, tmp_path):
-    """If the source .desktop doesn't exist, it reports the package must be installed
-    first rather than failing the run."""
+    """If the source .desktop doesn't exist, it reports the package must be installed first rather than failing the run."""
     recipe.declares("desktop", "ghost", desktop=str(tmp_path / "ghost.desktop"), switches=["use-gl=egl"])
 
     report = totchef.up()
@@ -82,8 +73,7 @@ def test_5_1_4_desktop_missing_source_reports_install_package_first(recipe, totc
 
 
 def test_5_2_1_1_local_state_merges_into_enabled_labs_experiments(recipe, totchef, home, read_json):
-    """`local_state` merges local_state_flags into
-    browser.enabled_labs_experiments of a Chromium Local State JSON."""
+    """`local_state` merges local_state_flags into browser.enabled_labs_experiments of a Chromium Local State JSON."""
     local_state = home / ".config/chromium/Local State"
     local_state.parent.mkdir(parents=True)
     local_state.write_text('{"browser": {"enabled_labs_experiments": ["existing-flag@1"]}}')
@@ -97,8 +87,7 @@ def test_5_2_1_1_local_state_merges_into_enabled_labs_experiments(recipe, totche
 
 
 def test_5_2_1_2_argv_json_merges_argv_and_enable_features_tolerating_comments(recipe, totchef, home, read_json):
-    """`argv_json` merges an argv table and --enable-features from a features list,
-    tolerating // comments in the existing file."""
+    """`argv_json` merges an argv table and --enable-features from a features list, tolerating // comments in the existing file."""
     argv_json = home / ".config/Code/argv.json"
     argv_json.parent.mkdir(parents=True)
     argv_json.write_text('// Code runtime args\n{\n  "locale": "en"\n}\n')
@@ -130,8 +119,7 @@ def test_5_2_2_chromium_flags_diffed_by_rendered_json_hash(recipe, totchef, home
 
 
 def test_5_2_3_local_state_skipped_while_browser_running(recipe, terminal, totchef, home):
-    """For Local State it won't write while the browser runs (a pgrep guard skips
-    the entry), naming the process via process_name if it differs."""
+    """For Local State it won't write while the browser runs (a pgrep guard skips the entry), naming the process via process_name if it differs."""
     local_state = home / ".config/BraveSoftware/Brave-Browser/Local State"
     local_state.parent.mkdir(parents=True)
     local_state.write_text('{"browser": {"enabled_labs_experiments": []}}')
@@ -147,8 +135,7 @@ def test_5_2_3_local_state_skipped_while_browser_running(recipe, terminal, totch
 
 
 def test_5_2_4_missing_base_file_advises_launch_once_invalid_json_soft_fails(recipe, totchef, home):
-    """A missing base file tells the operator to launch the app once and re-run;
-    invalid JSON is left untouched and soft-fails."""
+    """A missing base file tells the operator to launch the app once and re-run; invalid JSON is left untouched and soft-fails."""
     broken = home / ".config/electron/argv.json"
     broken.parent.mkdir(parents=True)
     broken.write_text("{ not valid json")
@@ -180,8 +167,7 @@ def test_5_2_5_chromium_flags_on_change_reminds_restart(recipe, totchef, home):
 
 
 def test_5_3_1_settings_merges_settings_env_into_env_preserving_other_keys(recipe, totchef, home, read_json):
-    """`[settings.<app>]` merges settings_env into the env object of a JSON file,
-    keeping all other keys intact."""
+    """`[settings.<app>]` merges settings_env into the env object of a JSON file, keeping all other keys intact."""
     settings = home / ".claude/settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text('{"theme": "dark", "env": {"EXISTING": "1"}}')

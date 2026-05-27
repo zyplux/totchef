@@ -1,12 +1,4 @@
-"""User stories §8 — Extending totchef (cook authors).
-
-One prose-style test per acceptance criterion in `user-stories.md` §8. The author's
-interface is the cook API, so each cook-shape story writes a real local cook drop-in
-(the source string is what an author writes — the `from totchef.cook_base import …`
-lives inside the cook, not in this test) and drives it end-to-end through `totchef`,
-asserting only what the operator observes: report rows, the commands the cook ran,
-and the files it produced.
-"""
+"""User stories §8 — Extending totchef. One test per §8 criterion, each driving a real local-cook drop-in through `totchef` and asserting observable output."""
 
 VERSIONED_COOK = """
 from totchef import shell
@@ -110,8 +102,7 @@ def _drop_local_cook(home, filename: str, source: str) -> None:
 
 
 def test_8_1_1_cook_registered_under_entry_point_group_serves_its_section(cli):
-    """A CookBase subclass registered under the `totchef.cooks` entry-point group
-    serves the section named by its entry-point; origin shows in `totchef --list-cooks`."""
+    """A CookBase subclass registered in the `totchef.cooks` entry-point group serves the section named by its entry-point; origin shows in `--list-cooks`."""
     cli.run("--list-cooks").assert_lists("apt_pkg", scope="root", origin="built-in")
 
 
@@ -119,8 +110,7 @@ def test_8_1_1_cook_registered_under_entry_point_group_serves_its_section(cli):
 
 
 def test_8_2_1_local_cook_file_is_picked_up_and_shadows_a_builtin(cli, home):
-    """A loose ~/.config/totchef/cooks/<section>_cook.py is loaded as a local cook
-    and shadows a built-in of the same name."""
+    """A loose ~/.config/totchef/cooks/<section>_cook.py is loaded as a local cook and shadows a built-in of the same name."""
     _drop_local_cook(home, "bash_cook.py", SHADOW_BASH_COOK)
 
     cli.run("--list-cooks").assert_lists("bash", origin="local")  # the built-in `bash` is now shadowed
@@ -130,8 +120,7 @@ def test_8_2_1_local_cook_file_is_picked_up_and_shadows_a_builtin(cli, home):
 
 
 def test_8_3_1_versioned_cook_implements_requested_installed_latest_sync(recipe, terminal, totchef, home):
-    """VersionedCook: implement list_requested/list_installed/find_latest/sync;
-    PackageListCook covers plain `packages = [...]` sections."""
+    """VersionedCook: implement list_requested/list_installed/find_latest/sync; PackageListCook covers plain `packages = [...]` sections."""
     _drop_local_cook(home, "gadget_cook.py", VERSIONED_COOK)
     recipe.declares("gadget", packages=["alpha", "beta"])
 
@@ -145,8 +134,7 @@ def test_8_3_1_versioned_cook_implements_requested_installed_latest_sync(recipe,
 
 
 def test_8_3_2_state_cook_implements_current_desired_apply_filestate_diffs(recipe, totchef, home, tmp_path):
-    """StateCook: implement get_current_state/get_desired_state/apply_resource;
-    FileStateCook already diffs by sha256."""
+    """StateCook: implement get_current_state/get_desired_state/apply_resource; FileStateCook already diffs by sha256."""
     _drop_local_cook(home, "note_cook.py", FILE_STATE_COOK)
     target = tmp_path / "note.txt"
     recipe.declares("note", "n", path=str(target), body="hello\n")
@@ -158,8 +146,7 @@ def test_8_3_2_state_cook_implements_current_desired_apply_filestate_diffs(recip
 
 
 def test_8_3_3_cook_only_probes_and_acts_orchestrator_owns_the_diff(recipe, terminal, totchef, home):
-    """The cook only probes and acts; the orchestrator owns every diff and
-    idempotency decision."""
+    """The cook only probes and acts; the orchestrator owns every diff and idempotency decision."""
     _drop_local_cook(home, "switch_cook.py", PROBE_ONLY_COOK)
     recipe.declares("switch", "matched", current="on", desired="on")  # cook reports states …
     recipe.declares("switch", "drifted", current="off", desired="on")
@@ -176,8 +163,7 @@ def test_8_3_3_cook_only_probes_and_acts_orchestrator_owns_the_diff(recipe, term
 
 
 def test_8_4_1_cook_entry_model_lints_recipe_slice_reporting_violations(cli, tmp_path):
-    """A cook's `entry_model` (pydantic, extra='forbid') is validated by lint, which
-    reports every violation as a precise `[node] location: message` line."""
+    """A cook's `entry_model` (pydantic, extra='forbid') is validated by lint, which reports every violation as a precise `[node] location: message` line."""
     typoed = tmp_path / "typo.toml"
     typoed.write_text('[file.x]\npath = "/x"\ncontent = "a"\nmoed = "0644"\n')
 

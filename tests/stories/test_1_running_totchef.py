@@ -1,11 +1,4 @@
-"""User stories §1 — Running totchef.
-
-One prose-style test per acceptance criterion in `user-stories.md` §1. The apply/plan
-stories drive the chef through the `totchef` action; the CLI-plumbing stories (lint
-output, `where`, `cooks`, `--version`, recipe discovery) invoke the real `totchef`
-command through the `cli` fixture and read what it printed, with the filesystem and
-environment arranged under `tmp_path`. `--list-cooks` prints the cook registry.
-"""
+"""User stories §1 — Running totchef. One test per §1 criterion: apply/plan drive the chef, the CLI stories run the real command under `tmp_path`."""
 
 GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version table:\n     1:2.40 500\n        500 http://archive noble/main amd64 Packages\n"
 
@@ -13,9 +6,8 @@ GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version t
 # 1.1 Apply a recipe to converge the system
 
 
-def test_1_1_1_up_reads_validates_escalates_previews_then_executes(recipe, terminal, totchef, tmp_path):
-    """`totchef up` reads the recipe, validates it, escalates to root, previews
-    the plan, then executes — creating or updating every resource that differs."""
+def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, terminal, totchef, tmp_path):
+    """`totchef up` resolves the recipe, escalates to root, then validates, previews, and executes — creating or updating every resource that differs."""
     target = tmp_path / "drop.conf"
     recipe.declares("file", "drop", path=str(target), content="X=1\n")
     recipe.declares("bash", "tweak", current_state="probe", desired_state="ok", apply="make-it-ok")
@@ -30,8 +22,7 @@ def test_1_1_1_up_reads_validates_escalates_previews_then_executes(recipe, termi
 
 
 def test_1_1_2_up_is_idempotent_rerun_reports_nothing_changed(recipe, totchef, tmp_path):
-    """Re-running when nothing has drifted reports "nothing changed" and makes no
-    modifications; the second run only touches what genuinely differs."""
+    """Re-running when nothing has drifted reports "nothing changed" and makes no modifications; the second run only touches what genuinely differs."""
     recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
 
     totchef.up().assert_shows("file.f", "applied")
@@ -58,8 +49,7 @@ def test_1_1_3_exit_code_communicates_outcome(scenario, terminal, tmp_path):
 
 
 def test_1_2_1_plan_dry_run_prints_table_makes_no_changes(recipe, terminal, totchef, tmp_path):
-    """`totchef plan` probes state and prints the plan table (would install /
-    upgrade / apply, up-to-date, ok) but makes no changes."""
+    """`totchef plan` probes state and prints the plan table (would install / upgrade / apply, up-to-date, ok) but makes no changes."""
     recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
     recipe.declares("bash", "step", current_state="probe", desired_state="ok", apply="make-it-ok")
     terminal.arrange("probe", "drift")
@@ -82,8 +72,7 @@ def test_1_2_2_plan_requires_no_root(recipe, terminal, totchef):
 
 
 def test_1_2_3_plan_shows_all_resources_including_unchanged(recipe, totchef, tmp_path):
-    """The plan shows every resource, not just the diff, so the full intended end
-    state is visible."""
+    """The plan shows every resource, not just the diff, so the full intended end state is visible."""
     settled = tmp_path / "settled"
     settled.write_text("X\n")  # already matches the desired content
     recipe.declares("file", "settled", path=str(settled), content="X\n")
@@ -110,8 +99,7 @@ def test_1_2_4_up_prints_plan_first_from_silent_probe(recipe, totchef, tmp_path)
 
 
 def test_1_3_1_lint_validates_and_prints_path_valid(cli, tmp_path):
-    """`totchef lint` validates against every cook's schema and the graph, then
-    prints `<path>: valid` or exits with a precise error."""
+    """`totchef lint` validates against every cook's schema and the graph, then prints `<path>: valid` or exits with a precise error."""
     good = tmp_path / "recipe.toml"
     good.write_text('[bash.step]\napply = "true"\n')
 
@@ -123,8 +111,7 @@ def test_1_3_1_lint_validates_and_prints_path_valid(cli, tmp_path):
 
 
 def test_1_3_2_lint_catches_schema_and_graph_errors(scenario):
-    """Catches: unregistered section, unknown key, missing-node dependency, cycle,
-    self-dependency, and `needs_root` on a subtable header."""
+    """Catches: unregistered section, unknown key, missing-node dependency, cycle, self-dependency, and `needs_root` on a subtable header."""
     scenario().declares("nosuch", packages=[]).assert_lint_rejects()  # unregistered section
     scenario().declares("file", "f", path="/x", content="a", typo=1).assert_lint_rejects()  # unknown key
     scenario().declares("bash", "a", apply="x", depends_on=["ghost"]).assert_lint_rejects()  # missing node
@@ -163,8 +150,7 @@ def test_1_4_1_where_prints_resolved_recipe_path(cli, tmp_path):
 
 
 def test_1_4_2_recipe_discovery_follows_fixed_precedence(cli, tmp_path, monkeypatch):
-    """Precedence: --recipe/-r, $TOTCHEF_RECIPE, walk up for recipe.toml,
-    ~/.config/totchef/recipe.toml, /etc/totchef/recipe.toml."""
+    """Precedence: --recipe/-r, $TOTCHEF_RECIPE, walk up for recipe.toml, ~/.config/totchef/recipe.toml, /etc/totchef/recipe.toml."""
     explicit = tmp_path / "explicit.toml"
     explicit.write_text("")
     cli.run("where", "--recipe", str(explicit)).assert_prints(str(explicit))  # an explicit flag wins
@@ -200,8 +186,7 @@ def test_1_4_3_no_recipe_found_lists_searched_locations(cli, tmp_path, monkeypat
 
 
 def test_1_5_1_cooks_lists_section_scope_and_origin(cli):
-    """`totchef --list-cooks` prints section, scope (root/user), and origin (built-in
-    / plugin:<dist> / local:<path>) for every resolvable cook."""
+    """`totchef --list-cooks` prints section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) for every resolvable cook."""
     cli.run("--list-cooks").assert_output("""
         [11]{section,scope,origin}:
           apt_pkg,root,built-in

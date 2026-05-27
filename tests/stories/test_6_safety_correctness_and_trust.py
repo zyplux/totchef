@@ -1,10 +1,4 @@
-"""User stories §6 — Safety, correctness, and trust.
-
-One prose-style test per acceptance criterion in `user-stories.md` §6. The convergence
-and failure-classification stories drive the chef through the `totchef` action; the
-escalation story drives the real `totchef up` through the `cli` fixture with the
-process-exec boundary faked, the way bash and the network are faked elsewhere.
-"""
+"""User stories §6 — Safety and trust. One test per §6 criterion; most drive the chef, the escalation story runs `totchef up` via `cli` with exec faked."""
 
 GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version table:\n     1:2.40 500\n        500 http://archive noble/main amd64 Packages\n"
 
@@ -13,8 +7,7 @@ GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version t
 
 
 def test_6_1_1_cooks_probe_and_act_only_on_the_difference(recipe, terminal, http, totchef, system, tmp_path):
-    """Versioned cooks skip up-to-date packages; state cooks skip resources whose
-    content hash already matches."""
+    """Versioned cooks skip up-to-date packages; state cooks skip resources whose content hash already matches."""
     already = tmp_path / "already.conf"
     already.write_text("A\n")
     recipe.declares("cargo", packages=["ripgrep"])
@@ -64,8 +57,7 @@ def test_6_2_1_convergence_is_create_update_only_never_prunes(recipe, totchef, t
 
 
 def test_6_3_1_up_re_execs_under_sudo_pinning_recipe_and_log(cli, monkeypatch, tmp_path):
-    """`totchef up` re-execs under sudo, pinning the resolved recipe path and shared
-    log file across the boundary."""
+    """`totchef up` re-execs under sudo, pinning the resolved recipe path and shared log file across the boundary."""
     recipe_path = tmp_path / "recipe.toml"
     recipe_path.write_text('[bash.step]\napply = "true"\n')
     escalation: dict = {}
@@ -87,9 +79,7 @@ def test_6_3_1_up_re_execs_under_sudo_pinning_recipe_and_log(cli, monkeypatch, t
 
 
 def test_6_3_2_forked_child_drops_privilege_for_user_nodes(apply_in_container):
-    """Each resource runs in a forked child: a needs_root child keeps root, every
-    other drops to the invoking user — so a user-scope cook's file is written as the
-    user and a needs_root entry's as root. Real escalate-and-drop, in a container."""
+    """A forked child keeps root if needs_root, else drops to the invoking user — user files written as the user, root entries as root. In a container."""
     run = apply_in_container(
         '[file.user_node]\npath = "/home/tester/by-user.txt"\ncontent = "u\\n"\n\n'
         '[file.root_node]\nneeds_root = true\npath = "/home/tester/by-root.txt"\ncontent = "r\\n"\n',
@@ -116,8 +106,7 @@ def test_6_3_3_plan_and_lint_never_escalate(recipe, terminal, totchef):
 
 
 def test_6_4_1_hard_failure_aborts_the_apply_and_exits_1(recipe, terminal, totchef):
-    """Hard failure aborts the apply and exits 1 (e.g. unavailable package, bash
-    apply error, uv tool install failure)."""
+    """Hard failure aborts the apply and exits 1 (e.g. unavailable package, bash apply error, uv tool install failure)."""
     recipe.declares("bash", "broken", apply="false-cmd")
     recipe.declares("bash", "after", apply="echo done", depends_on=["bash.broken"])
     terminal.arrange("false-cmd", exit_code=1)
@@ -130,8 +119,7 @@ def test_6_4_1_hard_failure_aborts_the_apply_and_exits_1(recipe, terminal, totch
 
 
 def test_6_4_2_soft_failure_warns_finishes_and_exits_75(recipe, terminal, totchef, tmp_path):
-    """Soft failure warns, finishes the run, exits 75 (e.g. snap refresh, post_hook,
-    invalid JSON in a target file)."""
+    """Soft failure warns, finishes the run, exits 75 (e.g. snap refresh, post_hook, invalid JSON in a target file)."""
     target = tmp_path / "grub.cfg"
     recipe.declares("file", "grub", path=str(target), content="X\n", post_hook="update-grub-fails")
     recipe.declares("bash", "after", apply="echo done", depends_on=["file.grub"])
@@ -173,8 +161,7 @@ def test_6_5_1_pre_hook_nonzero_exit_skips_the_item(recipe, terminal, totchef, t
 
 
 def test_6_5_2_cooks_compose_intrinsic_guards_with_pre_hook(recipe, terminal, totchef, home):
-    """Cooks chain their own guards with the operator's pre_hook (e.g. Chromium's
-    "browser not running" check)."""
+    """Cooks chain their own guards with the operator's pre_hook (e.g. Chromium's "browser not running" check)."""
     local_state = home / ".config/chromium/Local State"
     local_state.parent.mkdir(parents=True)
     local_state.write_text('{"browser": {"enabled_labs_experiments": []}}')

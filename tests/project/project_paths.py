@@ -17,5 +17,6 @@ def find_repo_root() -> Path:
 
 REPO_ROOT = find_repo_root()
 SRC = REPO_ROOT / "src"
+TESTS = REPO_ROOT / "tests"
 STORIES_DIR = REPO_ROOT / "tests" / "stories"
 STORIES_DOC = STORIES_DIR / "user-stories.md"

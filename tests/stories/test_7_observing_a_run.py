@@ -1,13 +1,4 @@
-"""User stories §7 — Observing a run.
-
-§7.1 (the color-coded report) is observed end-to-end through `totchef`, and §7.3.1
-(the log owned by the invoking user after a root apply) through the container fixture —
-a real escalate-and-drop. The remaining §7.2/§7.3.2-3 criteria (the live progress bar,
-per-cook log color, the scheduler's wait/unlock lines, and the log pump) are
-rendering/timing properties of the forking scheduler and file-logging pump the
-in-process framework does not run, and a container would only make them flakier (PTY
-scraping, concurrency races); those stay white-box here.
-"""
+"""User stories §7 — Observing a run. §7.1 report and §7.3.1 log ownership are observed end-to-end; §7.2/§7.3.2-3 scheduler/pump rendering stay white-box."""
 
 import totchef.logs as log_internals
 from totchef.cook_runner import format_queueing, format_unlocked
@@ -26,8 +17,7 @@ from totchef.terminal import (
 
 
 def test_7_1_1_report_table_color_coded_on_terminal_plain_toon_otherwise(recipe, scenario, terminal, totchef, tmp_path):
-    """A table with cook-node/current/latest/action; rich color-coded on a terminal,
-    plain TOON text on a non-terminal."""
+    """A table with cook-node/current/latest/action; rich color-coded on a terminal, plain TOON text on a non-terminal."""
     recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
 
     plan = totchef.plan()
@@ -42,8 +32,7 @@ def test_7_1_1_report_table_color_coded_on_terminal_plain_toon_otherwise(recipe,
 
 
 def test_7_1_2_up_shows_changed_rows_plus_footer_plan_shows_all(recipe, totchef, tmp_path):
-    """A real up shows only changed/failed rows plus a footer (unchanged count,
-    elapsed); a plan shows every row."""
+    """A real up shows only changed/failed rows plus a footer (unchanged count, elapsed); a plan shows every row."""
     settled = tmp_path / "settled"
     settled.write_text("X\n")
     recipe.declares("file", "settled", path=str(settled), content="X\n")
@@ -78,8 +67,7 @@ def test_7_1_3_content_hash_diffs_humanized_present_or_stale(recipe, totchef, tm
 
 
 def test_7_2_1_transient_progress_bar_cleared_on_exit(monkeypatch):
-    """An interactive progress bar shows completed/total and elapsed, cleared on
-    exit, leaving logs above it."""
+    """An interactive progress bar shows completed/total and elapsed, cleared on exit, leaving logs above it."""
     assert is_interactive() is False  # the test console is not a terminal
     with progress_region("Cooking", total=3) as bar:
         assert type(bar) is ProgressHandle  # off-terminal: a no-op handle
@@ -92,8 +80,7 @@ def test_7_2_1_transient_progress_bar_cleared_on_exit(monkeypatch):
 
 
 def test_7_2_2_log_lines_colorized_and_tagged_per_cook():
-    """Each cook's log lines are tagged with its name in a stable per-cook color so
-    concurrent output stays readable."""
+    """Each cook's log lines are tagged with its name in a stable per-cook color so concurrent output stays readable."""
     first = _runner_style("url.bun")
     again = _runner_style("url.bun")
     other = _runner_style("apt_pkg")
@@ -106,8 +93,7 @@ def test_7_2_2_log_lines_colorized_and_tagged_per_cook():
 
 
 def test_7_2_3_start_and_completion_lines_announce_waits_and_unblocks():
-    """Start lines announce who is running and what they wait on/unblock; completion
-    lines report timing and what just unlocked."""
+    """Start lines announce who is running and what they wait on/unblock; completion lines report timing and what just unlocked."""
     queueing = format_queueing(("apt_pkg",), {"apt_pkg": 5}, combined=5)
     assert "queueing" in queueing and "apt_pkg" in queueing
 
@@ -119,17 +105,14 @@ def test_7_2_3_start_and_completion_lines_announce_waits_and_unblocks():
 
 
 def test_7_3_1_timestamped_log_under_user_state_dir_chowned_back(apply_in_container):
-    """Each run writes a timestamped log under the invoking user's state dir, chowned
-    back to the user — so the operator owns their audit log even though the apply ran
-    as root. Real escalate-and-drop, in a container."""
+    """A run's timestamped log under the user's state dir is chowned back, so the operator owns it though the apply ran as root. In a container."""
     run = apply_in_container('[file.f]\npath = "/home/tester/f"\ncontent = "x\\n"\n', ["/home/tester/f"])
 
     assert run.log_owner == "tester", run.transcript
 
 
 def test_7_3_2_all_output_funnels_through_a_single_pump(monkeypatch, tmp_path):
-    """Parent and every forked cook's stdout/stderr funnel through one pump so log
-    lines never interleave with the live region."""
+    """Parent and every forked cook's stdout/stderr funnel through one pump so log lines never interleave with the live region."""
     log_file = tmp_path / "run.log"
     monkeypatch.setattr(log_internals, "LOG_HANDLE", open(log_file, "a"))  # noqa: SIM115 — the pump owns the handle for the run
 
@@ -143,8 +126,7 @@ def test_7_3_2_all_output_funnels_through_a_single_pump(monkeypatch, tmp_path):
 
 
 def test_7_3_3_dry_run_shows_only_plan_on_terminal_but_logs_everything(recipe, totchef, tmp_path):
-    """A dry run shows only the plan table on the terminal while still recording
-    every line to the log file."""
+    """A dry run shows only the plan table on the terminal while still recording every line to the log file."""
     set_terminal_echo(False)  # dry-run suppresses cook log echo to the terminal …
     assert log_internals.ECHO_LOGS_TO_TERMINAL is False
 

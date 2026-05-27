@@ -1,15 +1,10 @@
-"""User stories §4 — Configuring system state (root domains).
-
-One prose-style test per acceptance criterion in `user-stories.md` §4. Each drives
-the real chef in-process; only the system boundaries (bash, network, host) are faked.
-"""
+"""User stories §4 — Configuring system state. One test per §4 criterion on the real chef in-process; only system boundaries (bash, network, host) are faked."""
 
 # 4.1 Add third-party apt repositories securely
 
 
 def test_4_1_1_apt_repo_fetches_key_dearmors_writes_keyring_and_sources(recipe, terminal, http, totchef, tmp_path):
-    """`[apt_repo.<name>]` fetches the GPG key (de-armoring if needed), writes the
-    keyring, and writes a deb822 .sources with `Signed-By:`."""
+    """`[apt_repo.<name>]` fetches the GPG key (de-armoring if needed), writes the keyring, and writes a deb822 .sources with `Signed-By:`."""
     keyring = tmp_path / "vendor.gpg"
     sources = tmp_path / "vendor.sources"
     recipe.declares(
@@ -28,8 +23,7 @@ def test_4_1_1_apt_repo_fetches_key_dearmors_writes_keyring_and_sources(recipe, 
 
 
 def test_4_1_2_operator_declares_key_url_uris_and_optional_fields(recipe, http, totchef, tmp_path):
-    """Declares key_url and uris, with optional suites, components, architectures,
-    and custom keyring/source_path."""
+    """Declares key_url and uris, with optional suites, components, architectures, and custom keyring/source_path."""
     keyring = tmp_path / "vendor.gpg"
     sources = tmp_path / "vendor.sources"
     recipe.declares(
@@ -69,8 +63,7 @@ def test_4_1_3_suites_release_placeholder_substituted_with_codename(recipe, http
 
 
 def test_4_1_4_repo_configured_only_when_keyring_and_sources_both_exist(recipe, totchef, tmp_path):
-    """Configured only when both the keyring and the .sources file exist; otherwise
-    re-applied."""
+    """Configured only when both the keyring and the .sources file exist; otherwise re-applied."""
     keyring = tmp_path / "vendor.gpg"
     sources = tmp_path / "vendor.sources"
     keyring.write_bytes(b"key")  # only the keyring exists so far
@@ -87,8 +80,7 @@ def test_4_1_4_repo_configured_only_when_keyring_and_sources_both_exist(recipe, 
 
 
 def test_4_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, scenario, totchef, tmp_path):
-    """`[file.<name>]` writes from inline content or a bundled source asset with a
-    mode; exactly one of content/source must be set."""
+    """`[file.<name>]` writes from inline content or a bundled source asset with a mode; exactly one of content/source must be set."""
     inline = tmp_path / "drop.conf"
     bundled = tmp_path / "write-if-changed.py"
     recipe.declares("file", "drop", path=str(inline), content="X=1\n", mode="0600")
@@ -147,8 +139,7 @@ def test_4_2_4_file_is_privilege_agnostic_root_per_entry(recipe, totchef, cli, t
 
 
 def test_4_3_1_bash_skips_apply_when_current_state_equals_desired(recipe, terminal, totchef):
-    """totchef runs current_state; if its output equals desired_state the step is
-    skipped, otherwise apply runs."""
+    """totchef runs current_state; if its output equals desired_state the step is skipped, otherwise apply runs."""
     recipe.declares("bash", "pin", current_state="cat /etc/apt/preferences.d/pin", desired_state="Pin: release o=vendor", apply="install-pin")
     terminal.arrange("cat /etc/apt/preferences.d/pin", "Pin: release o=vendor")
 
@@ -170,8 +161,7 @@ def test_4_3_2_bash_with_no_current_state_always_applies(recipe, terminal, totch
 
 
 def test_4_3_3_bash_guarded_steps_are_no_ops_on_rerun(recipe, terminal, totchef):
-    """Used for pinning / preseed / prereqs, each guarded by a cheap state probe so
-    re-runs are no-ops."""
+    """Used for pinning / preseed / prereqs, each guarded by a cheap state probe so re-runs are no-ops."""
     recipe.declares("bash", "preseed", current_state="debconf-show ttf-mscorefonts", desired_state="accepted", apply="debconf-set-selections")
     terminal.arrange("debconf-show ttf-mscorefonts", "accepted")
 

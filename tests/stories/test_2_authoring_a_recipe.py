@@ -1,9 +1,4 @@
-"""User stories §2 — Authoring a recipe.
-
-One prose-style test per acceptance criterion in `user-stories.md` §2, driving the
-real chef end-to-end: fan-out and ordering are read off the plan/report the operator
-sees, and a malformed recipe is observed by the rejection lint hands back.
-"""
+"""User stories §2 — Authoring a recipe. One test per §2 criterion on the real chef: fan-out/ordering read off the plan, bad recipes via lint rejection."""
 
 APT_CACHE_POLICY = """\
 git:
@@ -23,8 +18,7 @@ def _exec_line(desktop_file) -> str:
 
 
 def test_2_1_1_each_section_maps_to_a_cook_plain_vs_subtable(recipe, terminal, totchef):
-    """A plain-data section is one unit of work; a subtable section fans out to one
-    addressable unit per entry."""
+    """A plain-data section is one unit of work; a subtable section fans out to one addressable unit per entry."""
     terminal.arrange("apt-cache policy", APT_CACHE_POLICY)
     recipe.declares("apt_pkg", packages=["git"])  # plain-data section: one domain unit
     recipe.declares("url", "bun", url="https://bun.sh/install")  # subtable …
@@ -50,8 +44,7 @@ def test_2_1_2_operator_declares_desired_state_not_steps(recipe, totchef, tmp_pa
 
 
 def test_2_2_1_depends_on_names_entry_node_or_section(recipe, terminal, totchef):
-    """`depends_on` can name an entry, a single-node section, or a whole section —
-    which fans out so the dependant waits for every one of its entries."""
+    """`depends_on` can name an entry, a single-node section, or a whole section — which fans out so the dependant waits for every one of its entries."""
     terminal.arrange("apt-cache policy", APT_CACHE_POLICY)
     recipe.declares("apt_pkg", packages=["git"])
     recipe.declares("apt_repo", "vendor", key_url="https://x", uris="https://y")
@@ -96,8 +89,7 @@ def test_2_2_3_bad_dependency_is_caught_at_lint(scenario):
 
 
 def test_2_3_1_section_defaults_fold_into_entries_lists_extend_others_override(recipe, totchef, home, tmp_path):
-    """Section-level scalar/list keys become defaults; a list entry **extends** the
-    shared list, while a scalar entry **overrides** the default."""
+    """Section-level scalar/list keys become defaults; a list entry **extends** the shared list, while a scalar entry **overrides** the default."""
     shared = tmp_path / "shared.desktop"
     shared.write_text("[Desktop Entry]\nExec=/usr/bin/shared %U\n")
     brave = tmp_path / "brave.desktop"
@@ -128,8 +120,7 @@ def test_2_3_2_shared_desktop_features_yield_union_per_entry(recipe, totchef, ho
 
 
 def test_2_4_1_needs_root_per_entry_escalates_a_privilege_agnostic_cook(recipe, totchef):
-    """A recipe entry can set `needs_root = true` to escalate a privilege-agnostic
-    cook (bash, file) for that one entry — the lint accepts the per-entry grant."""
+    """A cook's `needs_root` sets privilege, but an entry may set `needs_root = true` to escalate a privilege-agnostic cook (`bash`, `file`) per entry."""
     recipe.declares("bash", "root_step", apply="x", needs_root=True)
     recipe.declares("file", "root_file", path="/etc/x.conf", content="a", needs_root=True)
 
@@ -141,8 +132,7 @@ def test_2_4_1_needs_root_per_entry_escalates_a_privilege_agnostic_cook(recipe, 
 
 
 def test_2_4_2_lint_forbids_needs_root_on_a_subtable_header(scenario):
-    """`needs_root` on a subtable header is forbidden (it would grant root wholesale);
-    it must be per leaf entry, and the error says so."""
+    """`needs_root` on a subtable header is forbidden (it would grant root wholesale); it must be per leaf entry, and the error says so."""
     wholesale = scenario()
     wholesale.declares("bash", needs_root=True)  # header-level grant
     wholesale.declares("bash", "step", apply="x")

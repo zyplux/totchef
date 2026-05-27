@@ -28,17 +28,20 @@ The two roles referenced throughout:
 > compliance with my recipe, so that one command bootstraps a fresh install or
 > reconciles drift on an existing one.
 
-#### 1.1.1 up reads validates escalates previews then executes
+#### 1.1.1 up resolves escalates validates previews then executes
 
-`totchef up` reads the recipe, validates it, escalates to root, previews the
-plan, then executes — creating or updating every resource that differs from the
-desired state.
+`totchef up` resolves the recipe, escalates to root, then loads and validates
+it, previews the plan, and executes — creating or updating every resource that
+differs from the desired state. Escalation comes first, so even an invalid recipe
+triggers the `sudo` prompt *before* the validation error surfaces.
 
 #### 1.1.2 up is idempotent rerun reports nothing changed
 
 The run is **idempotent**: re-running when nothing has drifted reports
 "nothing changed" and makes no modifications. The work done on the second run is
-only what genuinely differs.
+only what genuinely differs. The one exception is the `url` vendor cook, which diffs
+*presence* rather than version: a tool that is already present re-runs its
+`update_action` on every run (see §3.5.1).
 
 #### 1.1.3 exit code communicates outcome
 
@@ -55,7 +58,8 @@ The exit code communicates the outcome to scripts and CI: `0` = success,
 
 `totchef plan` performs a **dry run**: it probes current state and prints a
 plan table of every resource and what would happen (`would install`,
-`would upgrade`, `would apply`, `up-to-date`, `ok`), but makes no changes.
+`would upgrade`, `would sync`, `would apply`, `up-to-date`, `ok`), but makes no
+changes.
 
 #### 1.2.2 plan requires no root
 
@@ -324,7 +328,9 @@ versions are looked up concurrently from PyPI for the plan.
 
 `[url.<name>]` fetches an installer URL and pipes it to `bash`, optionally with
 `args`. Presence (not version) is what's diffed: if the binary is missing it's
-installed; if present it's updated.
+installed; if present it's updated. Because version isn't tracked, a present tool
+shows `would sync` in a plan and re-runs its `update_action` on every `up` — reported
+as `unchanged` when the binary itself doesn't change.
 
 #### 3.5.2 binary name defaults to entry name overridable with bin
 
@@ -544,7 +550,8 @@ than corrupting the file.
 
 Every cook **probes** current state and acts only on the difference. Versioned
 cooks skip up-to-date packages; state cooks skip resources whose content hash already
-matches.
+matches. The `url` cook is the exception: it diffs presence, not version, so a present
+tool re-runs its `update_action` each run rather than being skipped (§3.5.1).
 
 #### 6.1.2 post hooks fire only on actual change
 
