@@ -4,9 +4,6 @@ One prose-style test per acceptance criterion in `user-stories.md` §3. Each dri
 the real chef in-process; only the system boundaries (bash, network, host) are faked.
 """
 
-from framework import RecipeBuilder, Totchef
-from totchef.recipe_graph import build_node_graph, build_nodes
-
 # A package's `apt-cache policy` output, before and after installation. Priority 500
 # (a real version-table entry) keeps it out of the "not in any repo" fail-fast path.
 POLICY_ABSENT = "git:\n  Installed: (none)\n  Candidate: 1:2.40-1\n  Version table:\n     1:2.40-1 500\n        500 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages\n"
@@ -41,22 +38,23 @@ def test_3_1_2_priority_zero_package_fails_fast_with_guidance(recipe, terminal, 
     report = totchef.up()
 
     report.assert_hard_failed()
-    assert "not available in any configured repo" in report.results["apt_pkg"].message
+    report.assert_logged("not available in any configured repo")
     terminal.expect_not_ran("nala full-upgrade")
     terminal.expect_not_ran("nala install")
 
 
-def test_3_1_3_apt_pkg_runs_as_root_after_prereqs_and_repos(recipe):
+def test_3_1_3_apt_pkg_runs_as_root_after_prereqs_and_repos(recipe, terminal, totchef, cli):
     """Runs as root; depends on apt prereqs and repos being in place first."""
     recipe.declares("apt_pkg", packages=["git"], depends_on=["bash", "apt_repo"])
     recipe.declares("bash", "apt_prereqs", apply="true")
     recipe.declares("apt_repo", "vendor", key_url="https://x/key", uris="https://x")
+    terminal.arrange("apt-cache policy git", POLICY_ABSENT)
 
-    nodes = build_nodes(recipe.config)
-    graph = build_node_graph(nodes)
+    cli.run("--list-cooks").assert_lists("apt_pkg", scope="root")  # runs as root
 
-    assert nodes["apt_pkg"].needs_root is True
-    assert {"bash.apt_prereqs", "apt_repo.vendor"} <= graph["apt_pkg"]
+    plan = totchef.plan()
+    plan.assert_ran_before("bash.apt_prereqs", "apt_pkg.git")  # after the prereqs
+    plan.assert_ran_before("apt_repo.vendor", "apt_pkg.git")  # after the repos
 
 
 # 3.2 Install and refresh snaps
@@ -78,30 +76,30 @@ def test_3_2_1_snap_installs_missing_and_refreshes_installed(recipe, terminal, t
     terminal.expect_not_ran("snap refresh code")
 
 
-def test_3_2_2_snap_install_failure_hard_refresh_failure_soft(terminal, system):
+def test_3_2_2_snap_install_failure_hard_refresh_failure_soft(scenario, terminal, system):
     """An install failure is hard; a refresh failure is soft (snap still usable)."""
     system.has("snap")
     terminal.arrange("snap list", "Name  Version\n")
     terminal.arrange("snap refresh --list", "")
     terminal.arrange("snap install nonesuch", exit_code=1)
-    install = Totchef(RecipeBuilder().declares("snap", packages=["nonesuch"]), terminal)
+    install = scenario().declares("snap", packages=["nonesuch"])
 
     hard = install.up()
 
     hard.assert_hard_failed()
-    assert "snap install failed" in hard.results["snap"].message
+    hard.assert_logged("snap install failed")
 
     terminal.reset()
     system.has("snap")
     terminal.arrange("snap list", "Name     Version\nslack    4.0\n")
     terminal.arrange("snap refresh --list", "Name   Version\nslack  4.1\n")
     terminal.arrange("snap refresh slack", exit_code=1)
-    refresh = Totchef(RecipeBuilder().declares("snap", packages=["slack"]), terminal)
+    refresh = scenario().declares("snap", packages=["slack"])
 
     soft = refresh.up()
 
     soft.assert_soft_failed()
-    assert "snap refresh failed" in soft.results["snap"].message
+    soft.assert_logged("snap refresh failed")
 
 
 def test_3_2_3_missing_snapd_is_a_hard_failure(recipe, totchef):
@@ -112,7 +110,7 @@ def test_3_2_3_missing_snapd_is_a_hard_failure(recipe, totchef):
     report = totchef.up()
 
     report.assert_hard_failed()
-    assert "snapd is not installed" in report.results["snap"].message
+    report.assert_logged("snapd is not installed")
 
 
 # 3.3 Install and update Rust crates
@@ -157,7 +155,7 @@ def test_3_3_3_missing_cargo_fails_hard_pointing_at_url_rustup(recipe, http, tot
     report = totchef.up()
 
     report.assert_hard_failed()
-    assert "rustup" in report.results["cargo"].message
+    report.assert_logged("rustup")
 
 
 def test_3_3_4_latest_crate_versions_looked_up_concurrently(recipe, http, totchef):
@@ -204,7 +202,7 @@ def test_3_4_2_uv_failure_reports_hard_naming_the_failed_tools(recipe, terminal,
     report = totchef.up()
 
     report.assert_hard_failed()
-    assert "brokentool" in report.results["uv"].message
+    report.assert_logged("brokentool")
 
 
 def test_3_4_3_uv_requires_uv_and_looks_up_latest_from_pypi(recipe, http, totchef):
@@ -220,7 +218,7 @@ def test_3_4_3_uv_requires_uv_and_looks_up_latest_from_pypi(recipe, http, totche
     report = totchef.up()
 
     report.assert_hard_failed()
-    assert "[url]" in report.results["uv"].message
+    report.assert_logged("[url]")
 
 
 # 3.5 Bootstrap vendor CLIs from their official installers
@@ -255,13 +253,13 @@ def test_3_5_2_binary_name_defaults_to_entry_name_overridable_with_bin(recipe, t
     terminal.expect_ran("claude-code --version")
 
 
-def test_3_5_3_update_action_arg_list_rerun_installer_or_absent(terminal, http, system):
+def test_3_5_3_update_action_arg_list_rerun_installer_or_absent(scenario, terminal, http, system):
     """update_action: an arg list run against the binary, "rerun-installer", or absent."""
     system.has("bun")
     terminal.arrange("bun --version", "1.1.0")
     http.arrange("bun.sh/install", "#!/bin/bash")
 
-    arg_list = Totchef(RecipeBuilder().declares("url", "bun", url="https://bun.sh/install", update_action=["upgrade"]), terminal)
+    arg_list = scenario().declares("url", "bun", url="https://bun.sh/install", update_action=["upgrade"])
     arg_list.up().assert_succeeded()
     terminal.expect_ran("bun upgrade")
     terminal.expect_not_ran("bash -s --")
@@ -270,14 +268,14 @@ def test_3_5_3_update_action_arg_list_rerun_installer_or_absent(terminal, http, 
     system.has("bun")
     terminal.arrange("bun --version", "1.1.0")
     http.arrange("bun.sh/install", "#!/bin/bash")
-    rerun = Totchef(RecipeBuilder().declares("url", "bun", url="https://bun.sh/install", update_action="rerun-installer"), terminal)
+    rerun = scenario().declares("url", "bun", url="https://bun.sh/install", update_action="rerun-installer")
     rerun.up().assert_succeeded()
     terminal.expect_ran("bash -s --")
 
     terminal.reset()
     system.has("bun")
     terminal.arrange("bun --version", "1.1.0")
-    absent = Totchef(RecipeBuilder().declares("url", "bun", url="https://bun.sh/install"), terminal)
+    absent = scenario().declares("url", "bun", url="https://bun.sh/install")
     absent.up().assert_succeeded()
     terminal.expect_not_ran("bash -s --")
     terminal.expect_not_ran("bun upgrade")
@@ -296,27 +294,27 @@ def test_3_5_4_update_guard_runs_before_updating(recipe, terminal, totchef, syst
     terminal.expect_ran("bun upgrade")
 
 
-def test_3_5_5_url_install_failure_hard_update_failure_soft(terminal, http, system):
+def test_3_5_5_url_install_failure_hard_update_failure_soft(scenario, terminal, http, system):
     """Install failure is hard, update failure is soft (the tool stays installed)."""
     http.arrange("bun.sh/install", "#!/bin/bash")
     terminal.arrange("bash -s --", exit_code=1)
-    install = Totchef(RecipeBuilder().declares("url", "bun", url="https://bun.sh/install"), terminal)
+    install = scenario().declares("url", "bun", url="https://bun.sh/install")
 
     hard = install.up()
 
     hard.assert_hard_failed()
-    assert "install failed" in hard.results["url.bun"].message
+    hard.assert_logged("install failed")
 
     terminal.reset()
     system.has("bun")
     terminal.arrange("bun --version", "1.1.0")
     terminal.arrange("bun upgrade", exit_code=1)
-    update = Totchef(RecipeBuilder().declares("url", "bun", url="https://bun.sh/install", update_action=["upgrade"]), terminal)
+    update = scenario().declares("url", "bun", url="https://bun.sh/install", update_action=["upgrade"])
 
     soft = update.up()
 
     soft.assert_soft_failed()
-    assert "update failed" in soft.results["url.bun"].message
+    soft.assert_logged("update failed")
 
 
 def test_3_5_6_version_best_effort_parsed_falls_back_to_present(recipe, terminal, totchef, system):
@@ -325,7 +323,9 @@ def test_3_5_6_version_best_effort_parsed_falls_back_to_present(recipe, terminal
     system.has("bun")
     terminal.arrange("bun --version", "bun: a fast runtime")
 
-    report = totchef.up()
+    plan = totchef.plan()
 
-    report.assert_shows("url.bun", "unchanged")
-    assert report.results["url.bun"].rows[0].installed == "present"
+    plan.assert_shows("url.bun", "would sync")
+    assert "present" in next(line for line in plan.report.splitlines() if "url.bun" in line)  # version parsed best-effort
+
+    totchef.up().assert_shows("url.bun", "unchanged")  # and an actual run sees it's already present

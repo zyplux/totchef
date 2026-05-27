@@ -179,6 +179,7 @@ packages = [
     "code-insiders",
     "gh",
     "signal-desktop",
+    "podman",
 ]
 
 [snap]

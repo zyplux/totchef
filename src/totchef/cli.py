@@ -9,8 +9,7 @@ from typing import Annotated
 
 import typer
 from loguru import logger
-from rich.console import Console
-from rich.table import Table
+from toon_format import encode
 
 from totchef import __version__
 from totchef.cook_base import CookResult
@@ -159,26 +158,31 @@ def where(recipe: RecipeOption = None) -> None:
     typer.echo(find_recipe(recipe))
 
 
-@app.command()
-def cooks() -> None:
-    """List every available cook — built-in, plugin, or local — and the recipe section it serves."""
-    table = Table(title="Available cooks", title_style="bold", header_style="bold cyan")
-    for column in ("section", "scope", "origin"):
-        table.add_column(column)
-    for section, entry in sorted(cook_registry().items()):
-        table.add_row(section, "root" if entry.needs_root else "user", entry.origin)
-    Console().print(table)
-
-
 def version_callback(value: bool) -> None:
     if value:
         typer.echo(f"totchef {__version__}")
         raise typer.Exit()
 
 
+def list_cooks_callback(value: bool) -> None:
+    """Print every resolvable cook — section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) — as TOON, then exit."""
+    if value:
+        rows = [
+            {"section": section, "scope": "root" if entry.needs_root else "user", "origin": entry.origin} for section, entry in sorted(cook_registry().items())
+        ]
+        typer.echo(encode(rows))
+        raise typer.Exit()
+
+
 @app.callback()
 def root(
-    version: Annotated[bool, typer.Option("--version", callback=version_callback, is_eager=True, help="Show the version and exit.")] = False,
+    _version: Annotated[bool, typer.Option("--version", callback=version_callback, is_eager=True, help="Show the version and exit.")] = False,
+    _list_cooks: Annotated[
+        bool,
+        typer.Option(
+            "--list-cooks", callback=list_cooks_callback, is_eager=True, help="List every resolvable cook and the recipe section it serves, then exit."
+        ),
+    ] = False,
 ) -> None:
     pass
 

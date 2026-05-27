@@ -1,18 +1,11 @@
 """User stories §1 — Running totchef.
 
 One prose-style test per acceptance criterion in `user-stories.md` §1. The apply/plan
-stories drive the chef in-process; the CLI-plumbing stories (lint output, `where`,
-`cooks`, `--version`, recipe discovery) call the real `cli`/`recipe`/`registry`
-functions at their boundary, with stdout captured and the filesystem under `tmp_path`.
+stories drive the chef through the `totchef` action; the CLI-plumbing stories (lint
+output, `where`, `cooks`, `--version`, recipe discovery) invoke the real `totchef`
+command through the `cli` fixture and read what it printed, with the filesystem and
+environment arranged under `tmp_path`. `--list-cooks` prints the cook registry.
 """
-
-import typer
-import pytest
-
-from framework import RecipeBuilder, RecipeRejected, Totchef
-from totchef import __version__, cli
-from totchef.recipe import RECIPE_ENV, find_recipe
-from totchef.registry import config_cooks_dir, cook_registry
 
 GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version table:\n     1:2.40 500\n        500 http://archive noble/main amd64 Packages\n"
 
@@ -48,18 +41,17 @@ def test_1_1_2_up_is_idempotent_rerun_reports_nothing_changed(recipe, totchef, t
     assert "nothing changed" in second.report
 
 
-def test_1_1_3_exit_code_communicates_outcome(recipe, terminal, totchef, tmp_path):
+def test_1_1_3_exit_code_communicates_outcome(scenario, terminal, tmp_path):
     """Exit code: 0 success, 75 soft failure (recoverable), 1 hard failure (aborted)."""
-    recipe.declares("file", "ok", path=str(tmp_path / "ok"), content="X\n")
-    assert totchef.up().exit_code == 0
+    scenario().declares("file", "ok", path=str(tmp_path / "ok"), content="X\n").up().assert_succeeded()
 
-    soft = Totchef(RecipeBuilder().declares("file", "g", path=str(tmp_path / "g"), content="X\n", post_hook="refresh-fails"), terminal)
+    soft = scenario().declares("file", "g", path=str(tmp_path / "g"), content="X\n", post_hook="refresh-fails")
     terminal.arrange("refresh-fails", exit_code=1)
-    assert soft.up().exit_code == 75
+    soft.up().assert_soft_failed()
 
-    hard = Totchef(RecipeBuilder().declares("bash", "b", apply="boom"), terminal)
+    hard = scenario().declares("bash", "b", apply="boom")
     terminal.arrange("boom", exit_code=1)
-    assert hard.up().exit_code == 1
+    hard.up().assert_hard_failed()
 
 
 # 1.2 Preview changes without touching the system
@@ -117,44 +109,36 @@ def test_1_2_4_up_prints_plan_first_from_silent_probe(recipe, totchef, tmp_path)
 # 1.3 Validate a recipe without running it
 
 
-def test_1_3_1_lint_validates_and_prints_path_valid(tmp_path, capsys):
+def test_1_3_1_lint_validates_and_prints_path_valid(cli, tmp_path):
     """`totchef lint` validates against every cook's schema and the graph, then
     prints `<path>: valid` or exits with a precise error."""
     good = tmp_path / "recipe.toml"
     good.write_text('[bash.step]\napply = "true"\n')
 
-    cli.lint(good)
-
-    assert ": valid" in capsys.readouterr().out
+    cli.run("lint", "--recipe", str(good)).assert_prints(": valid")
 
     bad = tmp_path / "bad.toml"
     bad.write_text("[nosuchsection]\nx = 1\n")
-    with pytest.raises(SystemExit):
-        cli.lint(bad)
+    cli.run("lint", "--recipe", str(bad)).assert_failed()
 
 
-def test_1_3_2_lint_catches_schema_and_graph_errors(terminal):
+def test_1_3_2_lint_catches_schema_and_graph_errors(scenario):
     """Catches: unregistered section, unknown key, missing-node dependency, cycle,
     self-dependency, and `needs_root` on a subtable header."""
+    scenario().declares("nosuch", packages=[]).assert_lint_rejects()  # unregistered section
+    scenario().declares("file", "f", path="/x", content="a", typo=1).assert_lint_rejects()  # unknown key
+    scenario().declares("bash", "a", apply="x", depends_on=["ghost"]).assert_lint_rejects()  # missing node
+    scenario().declares("bash", "a", apply="x", depends_on=["bash.a"]).assert_lint_rejects()  # self-dependency
 
-    def reject(builder: RecipeBuilder) -> None:
-        with pytest.raises(RecipeRejected):
-            Totchef(builder, terminal).lint()
-
-    reject(RecipeBuilder().declares("nosuch", packages=[]))  # unregistered section
-    reject(RecipeBuilder().declares("file", "f", path="/x", content="a", typo=1))  # unknown key
-    reject(RecipeBuilder().declares("bash", "a", apply="x", depends_on=["ghost"]))  # missing node
-    reject(RecipeBuilder().declares("bash", "a", apply="x", depends_on=["bash.a"]))  # self-dependency
-
-    cyclic = RecipeBuilder()
+    cyclic = scenario()
     cyclic.declares("bash", "a", apply="x", depends_on=["bash.b"])
     cyclic.declares("bash", "b", apply="y", depends_on=["bash.a"])
-    reject(cyclic)  # cycle
+    cyclic.assert_lint_rejects()  # cycle
 
-    header = RecipeBuilder()
+    header = scenario()
     header.declares("bash", needs_root=True)
     header.declares("bash", "s", apply="x")
-    reject(header)  # needs_root on a subtable header
+    header.assert_lint_rejects("needs_root")  # needs_root on a subtable header
 
 
 def test_1_3_3_lint_needs_no_root_and_changes_nothing(recipe, terminal, totchef, tmp_path):
@@ -170,66 +154,73 @@ def test_1_3_3_lint_needs_no_root_and_changes_nothing(recipe, terminal, totchef,
 # 1.4 Find out which recipe will be used
 
 
-def test_1_4_1_where_prints_resolved_recipe_path(tmp_path, capsys):
+def test_1_4_1_where_prints_resolved_recipe_path(cli, tmp_path):
     """`totchef where` prints the resolved recipe path and exits."""
     recipe_path = tmp_path / "recipe.toml"
     recipe_path.write_text("")
 
-    cli.where(recipe_path)
-
-    assert str(recipe_path) in capsys.readouterr().out
+    cli.run("where", "--recipe", str(recipe_path)).assert_prints(str(recipe_path))
 
 
-def test_1_4_2_recipe_discovery_follows_fixed_precedence(tmp_path, monkeypatch):
+def test_1_4_2_recipe_discovery_follows_fixed_precedence(cli, tmp_path, monkeypatch):
     """Precedence: --recipe/-r, $TOTCHEF_RECIPE, walk up for recipe.toml,
     ~/.config/totchef/recipe.toml, /etc/totchef/recipe.toml."""
     explicit = tmp_path / "explicit.toml"
     explicit.write_text("")
-    assert find_recipe(explicit) == explicit.resolve()  # an explicit flag wins
+    cli.run("where", "--recipe", str(explicit)).assert_prints(str(explicit))  # an explicit flag wins
 
     env_recipe = tmp_path / "env.toml"
     env_recipe.write_text("")
-    monkeypatch.setenv(RECIPE_ENV, str(env_recipe))
-    assert find_recipe(None) == env_recipe.resolve()  # then $TOTCHEF_RECIPE
-    monkeypatch.delenv(RECIPE_ENV)
+    monkeypatch.setenv("TOTCHEF_RECIPE", str(env_recipe))
+    cli.run("where").assert_prints(str(env_recipe))  # then $TOTCHEF_RECIPE
+    monkeypatch.delenv("TOTCHEF_RECIPE")
 
     project = tmp_path / "project"
     (project / "sub").mkdir(parents=True)
     (project / "recipe.toml").write_text("")
     monkeypatch.chdir(project / "sub")
-    assert find_recipe(None) == (project / "recipe.toml").resolve()  # then walk up from cwd
+    cli.run("where").assert_prints(str(project / "recipe.toml"))  # then walk up from cwd
 
 
-def test_1_4_3_no_recipe_found_lists_searched_locations(tmp_path, monkeypatch):
+def test_1_4_3_no_recipe_found_lists_searched_locations(cli, tmp_path, monkeypatch):
     """When no recipe is found, the error lists every location searched."""
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.chdir(empty)
-    monkeypatch.delenv(RECIPE_ENV, raising=False)
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
 
-    with pytest.raises(SystemExit) as miss:
-        find_recipe(None)
+    missing = cli.run("where")
 
-    assert "Looked in" in str(miss.value)
-    assert "recipe.toml" in str(miss.value)
+    missing.assert_failed()
+    missing.assert_prints("Looked in")
+    missing.assert_prints("recipe.toml")
 
 
 # 1.5 Discover available cooks
 
 
-def test_1_5_1_cooks_lists_section_scope_and_origin():
-    """`totchef cooks` prints section, scope (root/user), and origin (built-in /
-    plugin:<dist> / local:<path>) for every resolvable cook."""
-    registry = cook_registry()
+def test_1_5_1_cooks_lists_section_scope_and_origin(cli):
+    """`totchef --list-cooks` prints section, scope (root/user), and origin (built-in
+    / plugin:<dist> / local:<path>) for every resolvable cook."""
+    cli.run("--list-cooks").assert_output("""
+        [11]{section,scope,origin}:
+          apt_pkg,root,built-in
+          apt_repo,root,built-in
+          bash,user,built-in
+          cargo,user,built-in
+          chromium_flags,user,built-in
+          desktop,user,built-in
+          file,user,built-in
+          settings,user,built-in
+          snap,root,built-in
+          url,user,built-in
+          uv,user,built-in
+    """)
 
-    assert registry["apt_pkg"].needs_root is True  # root scope
-    assert registry["url"].needs_root is False  # user scope
-    assert registry["apt_pkg"].origin == "built-in"
 
-
-def test_1_5_2_cooks_reflects_live_registry():
+def test_1_5_2_cooks_reflects_live_registry(cli, home):
     """An installed plugin or a dropped-in local cook shows up immediately."""
-    cooks_dir = config_cooks_dir()
+    cooks_dir = home / ".config/totchef/cooks"
     cooks_dir.mkdir(parents=True)
     (cooks_dir / "widget_cook.py").write_text(
         "from totchef.cook_base import StateCook, StateChangeOutcome, StateEntrySpec\n"
@@ -241,22 +232,17 @@ def test_1_5_2_cooks_reflects_live_registry():
         "    def get_desired_state(self): return {}\n"
         "    def apply_resource(self, name): return StateChangeOutcome(changed=False)\n"
     )
-    cook_registry.cache_clear()
 
-    registry = cook_registry()
-
-    assert "widget" in registry
-    assert registry["widget"].origin.startswith("local:")
+    cli.run("--list-cooks").assert_lists("widget", origin="local")
 
 
 # 1.6 Check the version
 
 
-def test_1_6_version_reports_installed_version(capsys):
+def test_1_6_version_reports_installed_version(cli):
     """`totchef --version` reports the installed version."""
-    assert __version__ == "0.1.0"
+    version = cli.run("--version")
 
-    with pytest.raises(typer.Exit):
-        cli.version_callback(True)
-
-    assert f"totchef {__version__}" in capsys.readouterr().out
+    version.assert_succeeded()
+    version.assert_prints("totchef ")
+    assert "." in version.output and any(char.isdigit() for char in version.output)

@@ -1,0 +1,15 @@
+FROM python:3.14-slim-trixie
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends sudo \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home tester \
+ && echo 'tester ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/tester \
+ && chmod 0440 /etc/sudoers.d/tester
+
+COPY pyproject.toml README.md /src/
+COPY src /src/src
+RUN pip install --no-cache-dir /src
+
+USER tester
+WORKDIR /home/tester

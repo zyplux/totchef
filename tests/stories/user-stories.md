@@ -22,7 +22,7 @@ The two roles referenced throughout:
 
 ## 1. Running totchef
 
-### 1.1 Apply a recipe to converge the system
+### 1.1 [Apply a recipe to converge the system](test_1_running_totchef.py)
 
 > As an operator, I want to run `totchef up` and have my machine brought into
 > compliance with my recipe, so that one command bootstraps a fresh install or
@@ -46,7 +46,7 @@ The exit code communicates the outcome to scripts and CI: `0` = success,
 `75` = soft failure (something recoverable failed but the system is usable),
 `1` = hard failure (a critical step failed and the apply was aborted).
 
-### 1.2 Preview changes without touching the system
+### 1.2 [Preview changes without touching the system](test_1_running_totchef.py)
 
 > As an operator, I want to see exactly what `totchef` would change before it
 > changes anything, so that I can review a risky run or check for drift safely.
@@ -71,7 +71,7 @@ the full intended end state, not just the diff.
 During a real `up`, the same plan is printed first (from a silent probe pass)
 so the operator sees what is about to happen before it happens.
 
-### 1.3 Validate a recipe without running it
+### 1.3 [Validate a recipe without running it](test_1_running_totchef.py)
 
 > As an operator, I want to check that my recipe is well-formed before I rely on
 > it, so that a typo fails fast instead of mid-run.
@@ -93,7 +93,7 @@ entry.
 
 Linting needs no root and changes nothing.
 
-### 1.4 Find out which recipe will be used
+### 1.4 [Find out which recipe will be used](test_1_running_totchef.py)
 
 > As an operator, I want to know which `recipe.toml` totchef will pick up from my
 > current directory, so that I'm never surprised by the wrong file being applied.
@@ -114,7 +114,7 @@ directory looking for `recipe.toml` (project-local), then
 When no recipe is found, the error lists every location that was searched, so
 the operator knows exactly where to put one.
 
-### 1.5 Discover available cooks
+### 1.5 [Discover available cooks](test_1_running_totchef.py)
 
 > As an operator, I want to list every configuration domain totchef can manage on
 > this machine, so that I know which recipe sections are valid and where each comes
@@ -122,8 +122,8 @@ the operator knows exactly where to put one.
 
 #### 1.5.1 cooks lists section scope and origin
 
-`totchef cooks` prints a table of every resolvable cook: the **section** name
-it serves (e.g. `apt_pkg`, `url`), its **scope** (`root` or `user`), and its
+`totchef --list-cooks` prints a table of every resolvable cook: the **section**
+name it serves (e.g. `apt_pkg`, `url`), its **scope** (`root` or `user`), and its
 **origin** (`built-in`, `plugin:<dist>`, or `local:<path>`).
 
 #### 1.5.2 cooks reflects live registry
@@ -131,16 +131,20 @@ it serves (e.g. `apt_pkg`, `url`), its **scope** (`root` or `user`), and its
 This reflects the live registry, so an installed plugin or a dropped-in local
 cook shows up immediately.
 
-### 1.6 Check the version
+### 1.6 [Check the version](test_1_running_totchef.py)
 
 > As an operator, I want `totchef --version` to report the installed version, so I
 > can confirm what I'm running.
+
+#### 1.6 version reports installed version
+
+`totchef --version` prints the installed package version and exits.
 
 ---
 
 ## 2. Authoring a recipe
 
-### 2.1 Declare the machine I want in one TOML file
+### 2.1 [Declare the machine I want in one TOML file](test_2_authoring_a_recipe.py)
 
 > As an operator, I want the entire machine configuration expressed in a single
 > declarative `recipe.toml`, so that the file is the single source of truth and a
@@ -157,7 +161,7 @@ subtable section (`[url.<name>]`) fans out to one unit per entry.
 The operator never writes imperative steps — only the desired end state. The
 tool computes the diff and the order.
 
-### 2.2 Express ordering between resources
+### 2.2 [Express ordering between resources](test_2_authoring_a_recipe.py)
 
 > As an operator, I want to declare that one resource must be configured before
 > another, so that, for example, apt repos exist before packages from them are
@@ -179,7 +183,7 @@ node only starts once all of its dependencies have succeeded.
 A dependency on a node that doesn't exist, or a cycle, or a self-dependency,
 is caught at lint time with a message that explains how to fix it.
 
-### 2.3 Set shared defaults across a section's entries
+### 2.3 [Set shared defaults across a section's entries](test_2_authoring_a_recipe.py)
 
 > As an operator, I want to set options once at the section level and have each
 > entry inherit them, so that I don't repeat the same flags on every app.
@@ -195,7 +199,7 @@ shared list; for everything else, the entry **overrides** the default.
 Example: `[desktop]` declares a shared `features = [...]`, and
 `[desktop.brave]` adds a couple more — Brave ends up with the union.
 
-### 2.4 Grant root only where it's needed
+### 2.4 [Grant root only where it's needed](test_2_authoring_a_recipe.py)
 
 > As an operator, I want privilege granted per resource at the finest grain, so
 > that a user-scoped step never runs as root unnecessarily.
@@ -220,7 +224,7 @@ These cooks track installed versions, compare them against requested/latest, and
 install or upgrade only what differs. For each, the report shows the current and
 target version and whether the resource was installed, upgraded, or left alone.
 
-### 3.1 Install and upgrade apt packages
+### 3.1 [Install and upgrade apt packages](test_3_managing_packages.py)
 
 > As an operator, I want to declare a list of apt packages and have them installed
 > and kept up to date, so that my system software matches my recipe.
@@ -244,7 +248,7 @@ repo). If any package has **priority 0** (not found in any configured repo), the
 Runs as root; in the example recipe it depends on the apt prereqs and repos
 being in place first.
 
-### 3.2 Install and refresh snaps
+### 3.2 [Install and refresh snaps](test_3_managing_packages.py)
 
 > As an operator, I want to declare snap packages and have them installed and
 > refreshed, so that snap apps are managed the same declarative way.
@@ -264,7 +268,7 @@ the run warns but continues).
 If `snapd` isn't present, asking to install a snap is a hard failure with a
 clear message.
 
-### 3.3 Install and update Rust crates
+### 3.3 [Install and update Rust crates](test_3_managing_packages.py)
 
 > As an operator, I want to declare Rust CLI crates and have them installed via
 > prebuilt binaries, so that I get tools like `just` or `ripgrep` without a slow
@@ -290,7 +294,7 @@ the operator the `[url]` rustup install must run before `[cargo]` (typically via
 
 Latest versions are looked up concurrently from crates.io for the plan.
 
-### 3.4 Install and upgrade Python CLI tools
+### 3.4 [Install and upgrade Python CLI tools](test_3_managing_packages.py)
 
 > As an operator, I want to declare Python CLI tools and have each installed in its
 > own isolated environment, so that tools like `ruff` don't collide with each
@@ -310,7 +314,7 @@ If any tool fails, the run reports a hard failure naming the failed tools.
 Requires `uv` to be present (depends on the `[url]` uv installer); latest
 versions are looked up concurrently from PyPI for the plan.
 
-### 3.5 Bootstrap vendor CLIs from their official installers
+### 3.5 [Bootstrap vendor CLIs from their official installers](test_3_managing_packages.py)
 
 > As an operator, I want to install vendor tools from their `curl | bash` install
 > scripts and keep them updated, so that tools like `bun`, `uv`, `rustup`, or
@@ -351,7 +355,7 @@ still works, reporting the tool as simply `present`.
 
 ## 4. Configuring system state (root domains)
 
-### 4.1 Add third-party apt repositories securely
+### 4.1 [Add third-party apt repositories securely](test_4_configuring_system_state.py)
 
 > As an operator, I want to declare a third-party apt repo with its signing key and
 > have it configured the modern signed-by way, so that I can install vendor
@@ -379,7 +383,7 @@ Ubuntu release codename — so the same recipe works across releases.
 The repo is considered configured only when **both** the keyring and the
 `.sources` file exist; otherwise it's re-applied.
 
-### 4.2 Install files with exact content
+### 4.2 [Install files with exact content](test_4_configuring_system_state.py)
 
 > As an operator, I want to install a file with exact bytes — either inline content
 > or a bundled asset — and have a follow-up action fire only when it actually
@@ -408,7 +412,7 @@ refresh actions fire exactly when needed and never on a no-op run.
 Privilege-agnostic: set `needs_root = true` per entry for files under `/etc`,
 `/usr`, etc.
 
-### 4.3 Run arbitrary idempotent shell steps
+### 4.3 [Run arbitrary idempotent shell steps](test_4_configuring_system_state.py)
 
 > As an operator, I want an escape hatch to run a shell command idempotently — with
 > a check that decides whether it's even needed — so that I can handle the
@@ -442,7 +446,7 @@ These cooks edit per-user files in the operator's home directory (resolved to th
 invoking user even though the apply runs under sudo). They're typically used to
 push GPU acceleration flags into browsers and Electron apps.
 
-### 5.1 Override an app's desktop launcher
+### 5.1 [Override an app's desktop launcher](test_5_tuning_desktop_applications.py)
 
 > As an operator, I want to inject environment variables, switches, and feature
 > flags into an app's launcher, so that the app always starts with my GPU/Wayland
@@ -471,13 +475,11 @@ restart the app.
 If the source `.desktop` doesn't exist yet, it reports that the package must be
 installed first (rather than failing the whole run).
 
-### 5.2 Inject flags into Chromium and Electron apps
+### 5.2 [Inject flags into Chromium and Electron apps](test_5_tuning_desktop_applications.py)
 
 > As an operator, I want to enable Chromium feature flags (and Electron `argv.json`
 > options) for browsers and Electron-based editors, so that hardware video
 > acceleration and Wayland support are turned on per app.
-
-#### 5.2.1 chromium_flags edits one of two targets
 
 `[chromium_flags.<app>]` edits one of two targets (exactly one must be set):
 
@@ -511,7 +513,7 @@ once and re-run; invalid JSON is left untouched and soft-fails.
 
 On change it reminds the operator to restart the app.
 
-### 5.3 Merge environment settings into a JSON config
+### 5.3 [Merge environment settings into a JSON config](test_5_tuning_desktop_applications.py)
 
 > As an operator, I want to merge a block of environment values into the `env` key
 > of an app's JSON settings file while preserving everything else, so that I can
@@ -532,7 +534,7 @@ than corrupting the file.
 
 ## 6. Safety, correctness, and trust
 
-### 6.1 Trust that re-runs only change what drifted
+### 6.1 [Trust that re-runs only change what drifted](test_6_safety_correctness_and_trust.py)
 
 > As an operator, I want every run to be safe to repeat, so that I can run totchef
 > on a schedule or whenever I'm unsure, without fear of redundant or destructive
@@ -549,7 +551,7 @@ matches.
 `post_hook`s fire only on actual change, so expensive refreshes don't run on
 no-op passes.
 
-### 6.2 Understand that totchef creates and updates but never prunes
+### 6.2 [Understand that totchef creates and updates but never prunes](test_6_safety_correctness_and_trust.py)
 
 > As an operator, I want to know that removing a section from my recipe leaves the
 > existing artifact in place, so that I'm not surprised by what teardown does (and
@@ -562,7 +564,7 @@ uninstalling its target) leaves prior artifacts — a written `/etc` drop-in, a 
 keyring + `.sources`, a `.desktop` override — in place. Teardown is manual and
 deliberate.
 
-### 6.3 Escalate to root only for the apply, and drop privilege otherwise
+### 6.3 [Escalate to root only for the apply, and drop privilege otherwise](test_6_safety_correctness_and_trust.py)
 
 > As an operator, I want totchef to request root only when applying, and to run
 > each user-scoped step as me rather than as root, so that the privilege surface is
@@ -585,7 +587,7 @@ the next step's PATH.
 
 `plan` and `lint` never escalate.
 
-### 6.4 Distinguish recoverable failures from fatal ones
+### 6.4 [Distinguish recoverable failures from fatal ones](test_6_safety_correctness_and_trust.py)
 
 > As an operator, I want failures classified by severity, so that a cosmetic
 > hiccup doesn't abort my whole run but a real problem does.
@@ -604,7 +606,7 @@ isn't available anywhere, a `bash apply` command errors, a `uv` tool install fai
 
 The end-of-run report names which cooks hard- or soft-failed.
 
-### 6.5 Skip steps that shouldn't run right now
+### 6.5 [Skip steps that shouldn't run right now](test_6_safety_correctness_and_trust.py)
 
 > As an operator, I want a guard that can skip a step when a precondition isn't met,
 > so that, for example, a browser config isn't rewritten while the browser is
@@ -630,7 +632,7 @@ a versioned section fails the lint instead of silently never running.
 
 ## 7. Observing a run
 
-### 7.1 See a clear, color-coded report of what happened
+### 7.1 [See a clear, color-coded report of what happened](test_7_observing_a_run.py)
 
 > As an operator, I want a readable summary table at the end of a run, so that I can
 > tell at a glance what was installed, upgraded, applied, or left alone.
@@ -652,7 +654,7 @@ resources and total elapsed time; a `plan` shows every row.
 Content-hash diffs are humanized — a matching hash reads `present`, a drifting
 one reads `stale`.
 
-### 7.2 Watch progress while a long run executes
+### 7.2 [Watch progress while a long run executes](test_7_observing_a_run.py)
 
 > As an operator, I want live feedback during a run, so that I know it's working and
 > roughly how far along it is.
@@ -674,7 +676,7 @@ Start lines announce who is running (and, for user nodes, what they're waiting
 on and what they unblock); completion lines report timing and which downstream
 resources just unlocked.
 
-### 7.3 Keep a timestamped log of every run
+### 7.3 [Keep a timestamped log of every run](test_7_observing_a_run.py)
 
 > As an operator, I want each run recorded to a log file owned by me, so that I can
 > audit or debug after the fact, even though the apply ran as root.
@@ -700,7 +702,7 @@ line to the log file.
 
 ## 8. Extending totchef (cook authors)
 
-### 8.1 Add a new configuration domain as a plugin
+### 8.1 [Add a new configuration domain as a plugin](test_8_extending_totchef.py)
 
 > As a cook author, I want to add a new recipe section backed by my own cook, so
 > that totchef can manage a domain it doesn't ship with.
@@ -711,7 +713,7 @@ A cook is a `CookBase` subclass registered under the `totchef.cooks`
 entry-point group; the section name it serves is the entry-point name. Built-in and
 third-party cooks register the same way, and `totchef cooks` shows the origin.
 
-### 8.2 Prototype a cook without packaging it
+### 8.2 [Prototype a cook without packaging it](test_8_extending_totchef.py)
 
 > As a cook author, I want to drop a single Python file into my config dir and have
 > totchef pick it up, so that I can prototype a domain without building a package.
@@ -723,7 +725,7 @@ A loose `~/.config/totchef/cooks/<section>_cook.py` (containing exactly one
 section) is loaded as a local cook and **shadows** a built-in of the same name — an
 escape hatch for overriding or prototyping.
 
-### 8.3 Choose the right cook shape for my domain
+### 8.3 [Choose the right cook shape for my domain](test_8_extending_totchef.py)
 
 > As a cook author, I want base classes that match common patterns, so that I only
 > implement the domain-specific probe/act logic and inherit diffing, scheduling,
@@ -747,7 +749,7 @@ supplies the target path and the rendered content.
 The cook only *probes* and *acts*; the orchestrator owns every diff and
 idempotency decision, so a cook holds no diff logic.
 
-### 8.4 Get a typo'd recipe rejected against my schema
+### 8.4 [Get a typo'd recipe rejected against my schema](test_8_extending_totchef.py)
 
 > As a cook author, I want each cook to define a strict schema for its recipe
 > entries, so that an operator's typo fails the lint instead of being silently

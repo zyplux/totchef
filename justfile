@@ -8,7 +8,7 @@ plan:
     uv run totchef plan --recipe {{recipe}}
 
 cooks:
-    uv run totchef cooks
+    uv run totchef --list-cooks
 
 deadcode:
     uvx vulture
@@ -17,6 +17,7 @@ lint: deadcode
     ruff check --fix
     ruff format
     rumdl check --fix
+    uv run python tests/project/story_links.py
     uv run totchef lint --recipe {{recipe}}
 
 tc: lint

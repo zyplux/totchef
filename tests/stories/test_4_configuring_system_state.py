@@ -4,12 +4,6 @@ One prose-style test per acceptance criterion in `user-stories.md` §4. Each dri
 the real chef in-process; only the system boundaries (bash, network, host) are faked.
 """
 
-import pytest
-
-from framework import RecipeBuilder, RecipeRejected, Totchef
-from totchef.recipe_graph import build_nodes
-
-
 # 4.1 Add third-party apt repositories securely
 
 
@@ -92,7 +86,7 @@ def test_4_1_4_repo_configured_only_when_keyring_and_sources_both_exist(recipe, 
 # 4.2 Install files with exact content
 
 
-def test_4_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, terminal, totchef, tmp_path):
+def test_4_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, scenario, totchef, tmp_path):
     """`[file.<name>]` writes from inline content or a bundled source asset with a
     mode; exactly one of content/source must be set."""
     inline = tmp_path / "drop.conf"
@@ -106,9 +100,8 @@ def test_4_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, term
     assert (inline.stat().st_mode & 0o777) == 0o600
     assert bundled.read_bytes()  # copied verbatim from the bundled asset
 
-    both = Totchef(RecipeBuilder().declares("file", "x", path=str(inline), content="a", source="write-if-changed.py"), terminal)
-    with pytest.raises(RecipeRejected):
-        both.lint()
+    both = scenario().declares("file", "x", path=str(inline), content="a", source="write-if-changed.py")
+    both.assert_lint_rejects()  # exactly one of content/source must be set
 
 
 def test_4_2_2_file_diffed_by_content_hash(recipe, totchef, tmp_path):
@@ -136,15 +129,18 @@ def test_4_2_3_post_hook_runs_only_when_the_file_changed(recipe, terminal, totch
     terminal.expect_not_ran("update-grub")
 
 
-def test_4_2_4_file_is_privilege_agnostic_root_per_entry(recipe):
+def test_4_2_4_file_is_privilege_agnostic_root_per_entry(recipe, totchef, cli, tmp_path):
     """Privilege-agnostic: set needs_root per entry for files under /etc, /usr, etc."""
-    recipe.declares("file", "etc_file", path="/etc/totchef.conf", content="a", needs_root=True)
-    recipe.declares("file", "user_file", path="/home/me/.config/x", content="b")
+    cli.run("--list-cooks").assert_lists("file", scope="user")  # the cook itself is privilege-agnostic
 
-    nodes = build_nodes(recipe.config)
+    recipe.declares("file", "etc_file", path=str(tmp_path / "etc_file"), content="a", needs_root=True)
+    recipe.declares("file", "user_file", path=str(tmp_path / "user_file"), content="b")
 
-    assert nodes["file.etc_file"].needs_root is True
-    assert nodes["file.user_file"].needs_root is False
+    totchef.lint()  # the per-entry root grant is accepted
+
+    plan = totchef.plan()
+    plan.assert_shows("file.etc_file", "would apply")  # escalated for this entry
+    plan.assert_shows("file.user_file", "would apply")  # left as the invoking user
 
 
 # 4.3 Run arbitrary idempotent shell steps
@@ -184,12 +180,15 @@ def test_4_3_3_bash_guarded_steps_are_no_ops_on_rerun(recipe, terminal, totchef)
     terminal.expect_not_ran("debconf-set-selections")
 
 
-def test_4_3_4_bash_is_privilege_agnostic_root_per_entry(recipe):
+def test_4_3_4_bash_is_privilege_agnostic_root_per_entry(recipe, totchef, cli):
     """Privilege-agnostic: grant root per entry."""
+    cli.run("--list-cooks").assert_lists("bash", scope="user")  # the cook itself is privilege-agnostic
+
     recipe.declares("bash", "root_step", apply="x", needs_root=True)
     recipe.declares("bash", "user_step", apply="y")
 
-    nodes = build_nodes(recipe.config)
+    totchef.lint()  # the per-entry root grant is accepted
 
-    assert nodes["bash.root_step"].needs_root is True
-    assert nodes["bash.user_step"].needs_root is False
+    plan = totchef.plan()
+    plan.assert_shows("bash.root_step", "would apply")  # escalated for this entry
+    plan.assert_shows("bash.user_step", "would apply")  # left as the invoking user

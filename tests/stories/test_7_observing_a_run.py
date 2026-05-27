@@ -1,24 +1,21 @@
 """User stories §7 — Observing a run.
 
-One prose-style test per acceptance criterion in `user-stories.md` §7. The report
-content is captured from a real in-process run; the presentation and logging machinery
-(color map, progress region, per-cook colors, the log pump's writer, the state-dir
-resolver) is exercised through the real `terminal`/`cook_runner`/`logs` functions.
+§7.1 (the color-coded report) is observed end-to-end through `totchef`, and §7.3.1
+(the log owned by the invoking user after a root apply) through the container fixture —
+a real escalate-and-drop. The remaining §7.2/§7.3.2-3 criteria (the live progress bar,
+per-cook log color, the scheduler's wait/unlock lines, and the log pump) are
+rendering/timing properties of the forking scheduler and file-logging pump the
+in-process framework does not run, and a container would only make them flakier (PTY
+scraping, concurrency races); those stay white-box here.
 """
 
-import os
-import pwd
-
 import totchef.logs as log_internals
-from totchef.cli import summary_rows
 from totchef.cook_runner import format_queueing, format_unlocked
-from totchef.logs import log_dir, set_terminal_echo, write_log
+from totchef.logs import set_terminal_echo, write_log
 from totchef.terminal import (
-    ACTION_STYLES,
     ProgressHandle,
-    _colorize_log_line,
     _LiveProgress,
-    _report_cell,
+    _colorize_log_line,
     _runner_style,
     is_interactive,
     progress_region,
@@ -28,21 +25,20 @@ from totchef.terminal import (
 # 7.1 See a clear, color-coded report of what happened
 
 
-def test_7_1_1_report_table_color_coded_on_terminal_plain_toon_otherwise(recipe, totchef, tmp_path):
+def test_7_1_1_report_table_color_coded_on_terminal_plain_toon_otherwise(recipe, scenario, terminal, totchef, tmp_path):
     """A table with cook-node/current/latest/action; rich color-coded on a terminal,
     plain TOON text on a non-terminal."""
     recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
 
     plan = totchef.plan()
-
     assert '{"cook-node",current,latest,action}' in plan.report  # plain TOON off-terminal
-    plan.assert_shows("file.f", "would apply")
+    plan.assert_colored("would apply", "yellow")  # a pending change → yellow
 
-    assert ACTION_STYLES["installed"] == "green"
-    assert ACTION_STYLES["would apply"] == "yellow"
-    assert ACTION_STYLES["failed"] == "red bold"
-    assert ACTION_STYLES["unchanged"] == "dim"
-    assert _report_cell("action", "installed", "installed").style == "green"
+    totchef.up().assert_colored("applied", "green")  # a change made → green
+
+    boom = scenario().declares("bash", "boom", apply="explode")
+    terminal.arrange("explode", exit_code=1)
+    boom.up().assert_colored("failed", "red bold")  # a failure → red
 
 
 def test_7_1_2_up_shows_changed_rows_plus_footer_plan_shows_all(recipe, totchef, tmp_path):
@@ -60,10 +56,7 @@ def test_7_1_2_up_shows_changed_rows_plus_footer_plan_shows_all(recipe, totchef,
     assert "file.changed" in report.report  # up shows only the changed row …
     assert "file.settled" not in report.report  # … and hides the unchanged one
     report.assert_shows("file.settled", "unchanged")  # though it is still in the results
-
-    footer = summary_rows(unchanged=3, elapsed=1.5)
-    assert footer[0]["cook-node"] == "3 unchanged"
-    assert footer[0]["action"] == "1.5s"
+    assert "1 unchanged" in report.report  # the footer summarizes what was left alone
 
 
 def test_7_1_3_content_hash_diffs_humanized_present_or_stale(recipe, totchef, tmp_path):
@@ -125,17 +118,13 @@ def test_7_2_3_start_and_completion_lines_announce_waits_and_unblocks():
 # 7.3 Keep a timestamped log of every run
 
 
-def test_7_3_1_timestamped_log_under_user_state_dir_chowned_back(monkeypatch, home, tmp_path):
-    """Each run writes a timestamped log under the invoking user's state dir
-    (resolved from SUDO_USER), chowned back to the user."""
-    invoking_user = pwd.getpwuid(os.getuid()).pw_name
-    monkeypatch.setenv("SUDO_USER", invoking_user)  # a root re-exec records the real user
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    assert log_dir() == tmp_path / "state" / "totchef" / "logs"
+def test_7_3_1_timestamped_log_under_user_state_dir_chowned_back(apply_in_container):
+    """Each run writes a timestamped log under the invoking user's state dir, chowned
+    back to the user — so the operator owns their audit log even though the apply ran
+    as root. Real escalate-and-drop, in a container."""
+    run = apply_in_container('[file.f]\npath = "/home/tester/f"\ncontent = "x\\n"\n', ["/home/tester/f"])
 
-    monkeypatch.delenv("SUDO_USER")
-    monkeypatch.delenv("XDG_STATE_HOME")
-    assert log_dir() == home / ".local" / "state" / "totchef" / "logs"
+    assert run.log_owner == "tester", run.transcript
 
 
 def test_7_3_2_all_output_funnels_through_a_single_pump(monkeypatch, tmp_path):

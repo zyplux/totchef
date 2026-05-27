@@ -1,20 +1,10 @@
 """User stories §6 — Safety, correctness, and trust.
 
 One prose-style test per acceptance criterion in `user-stories.md` §6. The convergence
-and failure-classification stories drive the real chef in-process; the escalation /
-privilege-drop stories exercise the real `cli`/`harness` functions at their boundary.
+and failure-classification stories drive the chef through the `totchef` action; the
+escalation story drives the real `totchef up` through the `cli` fixture with the
+process-exec boundary faked, the way bash and the network are faked elsewhere.
 """
-
-import os
-import sys
-
-import pytest
-
-from framework import RecipeBuilder, RecipeRejected, Totchef
-from totchef.cli import ensure_root
-from totchef.harness import become_user
-from totchef.logs import SHARED_LOG_ENV
-from totchef.recipe import RECIPE_ENV
 
 GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version table:\n     1:2.40 500\n        500 http://archive noble/main amd64 Packages\n"
 
@@ -73,35 +63,41 @@ def test_6_2_1_convergence_is_create_update_only_never_prunes(recipe, totchef, t
 # 6.3 Escalate to root only for the apply, and drop privilege otherwise
 
 
-def test_6_3_1_up_re_execs_under_sudo_pinning_recipe_and_log(monkeypatch, tmp_path):
+def test_6_3_1_up_re_execs_under_sudo_pinning_recipe_and_log(cli, monkeypatch, tmp_path):
     """`totchef up` re-execs under sudo, pinning the resolved recipe path and shared
     log file across the boundary."""
     recipe_path = tmp_path / "recipe.toml"
-    captured: dict = {}
-    monkeypatch.setattr(os, "geteuid", lambda: 1000)  # not root yet
-    monkeypatch.setattr(os, "execvp", lambda file, argv: captured.update(file=file, argv=argv))
-    monkeypatch.setattr(sys, "argv", ["totchef", "up"])
-    monkeypatch.delenv(RECIPE_ENV, raising=False)
+    recipe_path.write_text('[bash.step]\napply = "true"\n')
+    escalation: dict = {}
 
-    ensure_root(recipe_path)
+    def capture_exec(target, argv):
+        escalation.update(target=target, argv=list(argv))
+        raise SystemExit(0)  # sudo replaces the process — control never returns
 
-    assert captured["file"] == "sudo"
-    assert os.environ[RECIPE_ENV] == str(recipe_path)
-    assert f"--preserve-env={SHARED_LOG_ENV},{RECIPE_ENV}" in captured["argv"]
+    monkeypatch.setattr("os.geteuid", lambda: 1000)  # not root yet
+    monkeypatch.setattr("os.execvp", capture_exec)
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
+
+    cli.run("up", "--recipe", str(recipe_path))
+
+    assert escalation["target"] == "sudo"  # re-execs under sudo
+    preserve = next(arg for arg in escalation["argv"] if arg.startswith("--preserve-env="))
+    assert "TOTCHEF_RECIPE" in preserve and "LOG" in preserve  # recipe and log file pinned across the boundary
+    cli.run("where").assert_prints(str(recipe_path))  # the pinned recipe is what a fresh resolution now finds
 
 
-def test_6_3_2_forked_child_drops_privilege_for_user_nodes(monkeypatch):
-    """A needs_root child keeps root; every other child drops privilege to the
-    invoking user and repoints HOME/USER/PATH."""
-    monkeypatch.setattr(os, "geteuid", lambda: 1000)  # already unprivileged: nothing to drop
-    home_before = os.environ.get("HOME")
-    become_user()
-    assert os.environ.get("HOME") == home_before
+def test_6_3_2_forked_child_drops_privilege_for_user_nodes(apply_in_container):
+    """Each resource runs in a forked child: a needs_root child keeps root, every
+    other drops to the invoking user — so a user-scope cook's file is written as the
+    user and a needs_root entry's as root. Real escalate-and-drop, in a container."""
+    run = apply_in_container(
+        '[file.user_node]\npath = "/home/tester/by-user.txt"\ncontent = "u\\n"\n\n'
+        '[file.root_node]\nneeds_root = true\npath = "/home/tester/by-root.txt"\ncontent = "r\\n"\n',
+        ["/home/tester/by-user.txt", "/home/tester/by-root.txt"],
+    )
 
-    monkeypatch.setattr(os, "geteuid", lambda: 0)  # root, but not launched via sudo
-    monkeypatch.delenv("SUDO_USER", raising=False)
-    with pytest.raises(SystemExit):
-        become_user()
+    assert run.owners["/home/tester/by-user.txt"] == "tester", run.transcript  # dropped to the user
+    assert run.owners["/home/tester/by-root.txt"] == "root", run.transcript  # needs_root kept root
 
 
 def test_6_3_3_plan_and_lint_never_escalate(recipe, terminal, totchef):
@@ -192,9 +188,6 @@ def test_6_5_2_cooks_compose_intrinsic_guards_with_pre_hook(recipe, terminal, to
     terminal.expect_ran("test -e /run/maintenance")  # ...operator guard chained into one
 
 
-def test_6_5_3_hooks_only_valid_on_state_cook_sections(terminal):
+def test_6_5_3_hooks_only_valid_on_state_cook_sections(scenario):
     """Declaring pre_hook/post_hook on a versioned section fails the lint."""
-    bad = Totchef(RecipeBuilder().declares("cargo", packages=["ripgrep"], pre_hook="test -e /x"), terminal)
-
-    with pytest.raises(RecipeRejected):
-        bad.lint()
+    scenario().declares("cargo", packages=["ripgrep"], pre_hook="test -e /x").assert_lint_rejects()
