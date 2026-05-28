@@ -1,4 +1,4 @@
-"""User stories §8 — Extending totchef. One test per §8 criterion, each driving a real local-cook drop-in through `totchef` and asserting observable output."""
+"""User stories §9 — Extending totchef. One test per §9 criterion, each driving a real local-cook drop-in through `totchef` and asserting observable output."""
 
 VERSIONED_COOK = """
 from totchef import shell
@@ -22,10 +22,10 @@ class GadgetCook(PackageListCook):
 FILE_STATE_COOK = """
 from pathlib import Path
 
-from totchef.cook_base import FileStateCook, StateChangeOutcome, StateEntrySpec
+from totchef.cook_base import FileStateCook, StateChangeOutcome, EntrySpec
 
 
-class NoteEntry(StateEntrySpec):
+class NoteEntry(EntrySpec):
     path: str
     body: str = ""
 
@@ -48,10 +48,10 @@ class NoteCook(FileStateCook[NoteEntry]):
 
 PROBE_ONLY_COOK = """
 from totchef import shell
-from totchef.cook_base import StateChangeOutcome, StateCook, StateEntrySpec
+from totchef.cook_base import StateChangeOutcome, StateCook, EntrySpec
 
 
-class SwitchEntry(StateEntrySpec):
+class SwitchEntry(EntrySpec):
     current: str = ""
     desired: str = ""
 
@@ -71,10 +71,10 @@ class SwitchCook(StateCook[SwitchEntry]):
 """
 
 SHADOW_BASH_COOK = """
-from totchef.cook_base import StateChangeOutcome, StateCook, StateEntrySpec
+from totchef.cook_base import StateChangeOutcome, StateCook, EntrySpec
 
 
-class ShadowBashEntry(StateEntrySpec):
+class ShadowBashEntry(EntrySpec):
     apply: str = ""
 
 
@@ -101,15 +101,19 @@ def _drop_local_cook(home, filename: str, source: str) -> None:
 # 8.1 Add a new configuration domain as a plugin
 
 
-def test_8_1_1_cook_registered_under_entry_point_group_serves_its_section(cli):
+def test_9_1_1_cook_registered_under_entry_point_group_serves_its_section(cli, register_plugin):
     """A CookBase subclass registered in the `totchef.cooks` entry-point group serves the section named by its entry-point; origin shows in `--list-cooks`."""
     cli.run("--list-cooks").assert_lists("apt_pkg", scope="root", origin="built-in")
+
+    register_plugin("gadget", "acme-totchef-plugin")  # a third-party dist registers the same way as a built-in
+
+    cli.run("--list-cooks").assert_lists("gadget", origin="plugin:acme-totchef-plugin")  # serves its section, origin reads plugin:<dist>
 
 
 # 8.2 Prototype a cook without packaging it
 
 
-def test_8_2_1_local_cook_file_is_picked_up_and_shadows_a_builtin(cli, home):
+def test_9_2_1_local_cook_file_is_picked_up_and_shadows_a_builtin(cli, home):
     """A loose ~/.config/totchef/cooks/<section>_cook.py is loaded as a local cook and shadows a built-in of the same name."""
     _drop_local_cook(home, "bash_cook.py", SHADOW_BASH_COOK)
 
@@ -119,7 +123,7 @@ def test_8_2_1_local_cook_file_is_picked_up_and_shadows_a_builtin(cli, home):
 # 8.3 Choose the right cook shape for my domain
 
 
-def test_8_3_1_versioned_cook_implements_requested_installed_latest_sync(recipe, terminal, totchef, home):
+def test_9_3_1_versioned_cook_implements_requested_installed_latest_sync(recipe, terminal, totchef, home):
     """VersionedCook: implement list_requested/list_installed/find_latest/sync; PackageListCook covers plain `packages = [...]` sections."""
     _drop_local_cook(home, "gadget_cook.py", VERSIONED_COOK)
     recipe.declares("gadget", packages=["alpha", "beta"])
@@ -133,7 +137,7 @@ def test_8_3_1_versioned_cook_implements_requested_installed_latest_sync(recipe,
     terminal.expect_ran("install-gadget beta")
 
 
-def test_8_3_2_state_cook_implements_current_desired_apply_filestate_diffs(recipe, totchef, home, tmp_path):
+def test_9_3_2_state_cook_implements_current_desired_apply_filestate_diffs(recipe, totchef, home, tmp_path):
     """StateCook: implement get_current_state/get_desired_state/apply_resource; FileStateCook already diffs by sha256."""
     _drop_local_cook(home, "note_cook.py", FILE_STATE_COOK)
     target = tmp_path / "note.txt"
@@ -145,7 +149,7 @@ def test_8_3_2_state_cook_implements_current_desired_apply_filestate_diffs(recip
     totchef.up().assert_shows("note.n", "unchanged")  # sha256 matches ⇒ no rewrite, for free
 
 
-def test_8_3_3_cook_only_probes_and_acts_orchestrator_owns_the_diff(recipe, terminal, totchef, home):
+def test_9_3_3_cook_only_probes_and_acts_orchestrator_owns_the_diff(recipe, terminal, totchef, home):
     """The cook only probes and acts; the orchestrator owns every diff and idempotency decision."""
     _drop_local_cook(home, "switch_cook.py", PROBE_ONLY_COOK)
     recipe.declares("switch", "matched", current="on", desired="on")  # cook reports states …
@@ -162,7 +166,7 @@ def test_8_3_3_cook_only_probes_and_acts_orchestrator_owns_the_diff(recipe, term
 # 8.4 Get a typo'd recipe rejected against my schema
 
 
-def test_8_4_1_cook_entry_model_lints_recipe_slice_reporting_violations(cli, tmp_path):
+def test_9_4_1_cook_entry_model_lints_recipe_slice_reporting_violations(cli, tmp_path):
     """A cook's `entry_model` (pydantic, extra='forbid') is validated by lint, which reports every violation as a precise `[node] location: message` line."""
     typoed = tmp_path / "typo.toml"
     typoed.write_text('[file.x]\npath = "/x"\ncontent = "a"\nmoed = "0644"\n')

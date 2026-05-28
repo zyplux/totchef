@@ -6,7 +6,7 @@ GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version t
 # 1.1 Apply a recipe to converge the system
 
 
-def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, terminal, totchef, tmp_path):
+def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, terminal, totchef, tmp_path, cli, monkeypatch):
     """`totchef up` resolves the recipe, escalates to root, then validates, previews, and executes — creating or updating every resource that differs."""
     target = tmp_path / "drop.conf"
     recipe.declares("file", "drop", path=str(target), content="X=1\n")
@@ -20,6 +20,24 @@ def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, te
     report.assert_shows("bash.tweak", "applied")  # updated
     assert target.read_text() == "X=1\n"
 
+    # escalation comes first: even an invalid recipe re-execs under sudo *before* validation surfaces
+    invalid = tmp_path / "invalid.toml"
+    invalid.write_text("[nosuchsection]\nx = 1\n")
+    escalated: dict = {}
+
+    def capture_exec(target: str, argv: list[str]) -> None:
+        escalated["target"] = target
+        raise SystemExit(0)  # sudo replaces the process — control never returns to validate the recipe
+
+    monkeypatch.setattr("os.geteuid", lambda: 1000)  # not root yet
+    monkeypatch.setattr("os.execvp", capture_exec)
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
+
+    rejected = cli.run("up", "--recipe", str(invalid))
+
+    assert escalated["target"] == "sudo"  # escalated …
+    assert "no cook registered" not in rejected.output  # … before the recipe was validated, so the schema error never surfaced
+
 
 def test_1_1_2_up_is_idempotent_rerun_reports_nothing_changed(recipe, totchef, tmp_path):
     """Re-running when nothing has drifted reports "nothing changed" and makes no modifications; the second run only touches what genuinely differs."""
@@ -32,17 +50,17 @@ def test_1_1_2_up_is_idempotent_rerun_reports_nothing_changed(recipe, totchef, t
     assert "nothing changed" in second.report
 
 
-def test_1_1_3_exit_code_communicates_outcome(scenario, terminal, tmp_path):
+def test_1_1_3_exit_code_communicates_outcome(scenario, chef, terminal, tmp_path):
     """Exit code: 0 success, 75 soft failure (recoverable), 1 hard failure (aborted)."""
-    scenario().declares("file", "ok", path=str(tmp_path / "ok"), content="X\n").up().assert_succeeded()
+    chef(scenario().declares("file", "ok", path=str(tmp_path / "ok"), content="X\n")).up().assert_succeeded()
 
     soft = scenario().declares("file", "g", path=str(tmp_path / "g"), content="X\n", post_hook="refresh-fails")
     terminal.arrange("refresh-fails", exit_code=1)
-    soft.up().assert_soft_failed()
+    chef(soft).up().assert_soft_failed()
 
     hard = scenario().declares("bash", "b", apply="boom")
     terminal.arrange("boom", exit_code=1)
-    hard.up().assert_hard_failed()
+    chef(hard).up().assert_hard_failed()
 
 
 # 1.2 Preview changes without touching the system
@@ -62,13 +80,27 @@ def test_1_2_1_plan_dry_run_prints_table_makes_no_changes(recipe, terminal, totc
     assert not (tmp_path / "f").exists()
 
 
-def test_1_2_2_plan_requires_no_root(recipe, terminal, totchef):
+def test_1_2_2_plan_requires_no_root(recipe, terminal, totchef, cli, monkeypatch, tmp_path):
     """A dry run never escalates privileges."""
     recipe.declares("apt_pkg", packages=["git"])  # a root-scoped cook, planned without root
     terminal.arrange("apt-cache policy git", GIT_NEEDS_INSTALL)
 
     totchef.plan().assert_shows("apt_pkg.git", "would install")
     terminal.expect_not_ran("nala")  # no privileged transaction
+
+    # the real gate: a dry run from a non-root euid never re-execs under sudo
+    escalations: list = []
+    monkeypatch.setattr("os.geteuid", lambda: 1000)  # not root — so any escalation would call execvp
+    monkeypatch.setattr("os.execvp", lambda *argv: escalations.append(argv))
+    monkeypatch.setattr("totchef.cli.run_recipe", lambda config, dry_run: {})  # don't fork real cooks in-process
+    monkeypatch.setattr("totchef.cli.start_logging", lambda echo_to_terminal=True: tmp_path / "log")
+    monkeypatch.setattr("totchef.cli.drain_logs", lambda: None)
+    recipe_path = tmp_path / "recipe.toml"
+    recipe_path.write_text('[apt_pkg]\npackages = ["git"]\n')
+
+    cli.run("plan", "--recipe", str(recipe_path)).assert_succeeded()
+
+    assert escalations == []  # plan ran to completion without ever escalating
 
 
 def test_1_2_3_plan_shows_all_resources_including_unchanged(recipe, totchef, tmp_path):
@@ -86,13 +118,15 @@ def test_1_2_3_plan_shows_all_resources_including_unchanged(recipe, totchef, tmp
 
 
 def test_1_2_4_up_prints_plan_first_from_silent_probe(recipe, totchef, tmp_path):
-    """During a real `up`, the same plan is printed first from a silent probe pass."""
+    """During a real `up`, the same plan is printed first from a silent probe pass — before the converging run."""
     recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
 
-    preview = totchef.plan()  # the silent probe pass an `up` runs first
-    preview.assert_shows("file.f", "would apply")
+    report = totchef.up()
+    shown = report.terminal_report
 
-    totchef.up().assert_shows("file.f", "applied")  # then it executes exactly that
+    assert shown.index("Plan") < shown.index("Report")  # the probe's plan table is printed before the converging report
+    assert "would apply" in shown  # the plan previews the pending change (probed from pre-run state) …
+    assert "applied" in shown  # … then the report shows the converging run made it
 
 
 # 1.3 Validate a recipe without running it
@@ -110,29 +144,29 @@ def test_1_3_1_lint_validates_and_prints_path_valid(cli, tmp_path):
     cli.run("lint", "--recipe", str(bad)).assert_failed()
 
 
-def test_1_3_2_lint_catches_schema_and_graph_errors(scenario):
+def test_1_3_2_lint_catches_schema_and_graph_errors(scenario, chef):
     """Catches: unregistered section, unknown key, missing-node dependency, cycle, self-dependency, and `needs_root` on a subtable header."""
-    scenario().declares("nosuch", packages=[]).assert_lint_rejects()  # unregistered section
-    scenario().declares("file", "f", path="/x", content="a", typo=1).assert_lint_rejects()  # unknown key
-    scenario().declares("bash", "a", apply="x", depends_on=["ghost"]).assert_lint_rejects()  # missing node
-    scenario().declares("bash", "a", apply="x", depends_on=["bash.a"]).assert_lint_rejects()  # self-dependency
+    chef(scenario().declares("nosuch", packages=[])).lint().assert_rejected()  # unregistered section
+    chef(scenario().declares("file", "f", path="/x", content="a", typo=1)).lint().assert_rejected()  # unknown key
+    chef(scenario().declares("bash", "a", apply="x", depends_on=["ghost"])).lint().assert_rejected()  # missing node
+    chef(scenario().declares("bash", "a", apply="x", depends_on=["bash.a"])).lint().assert_rejected()  # self-dependency
 
     cyclic = scenario()
     cyclic.declares("bash", "a", apply="x", depends_on=["bash.b"])
     cyclic.declares("bash", "b", apply="y", depends_on=["bash.a"])
-    cyclic.assert_lint_rejects()  # cycle
+    chef(cyclic).lint().assert_rejected()  # cycle
 
     header = scenario()
     header.declares("bash", needs_root=True)
     header.declares("bash", "s", apply="x")
-    header.assert_lint_rejects("needs_root")  # needs_root on a subtable header
+    chef(header).lint().assert_rejected("needs_root")  # needs_root on a subtable header
 
 
 def test_1_3_3_lint_needs_no_root_and_changes_nothing(recipe, terminal, totchef, tmp_path):
     """Linting needs no root and changes nothing."""
     recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
 
-    totchef.lint()  # returns cleanly
+    totchef.lint().assert_valid()  # returns cleanly
 
     assert not (tmp_path / "f").exists()
     assert terminal.commands == []  # no shell ran at all
@@ -188,10 +222,11 @@ def test_1_4_3_no_recipe_found_lists_searched_locations(cli, tmp_path, monkeypat
 def test_1_5_1_cooks_lists_section_scope_and_origin(cli):
     """`totchef --list-cooks` prints section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) for every resolvable cook."""
     cli.run("--list-cooks").assert_output("""
-        [11]{section,scope,origin}:
+        [12]{section,scope,origin}:
           apt_pkg,root,built-in
           apt_repo,root,built-in
           bash,user,built-in
+          bun,user,built-in
           cargo,user,built-in
           chromium_flags,user,built-in
           desktop,user,built-in
@@ -208,8 +243,8 @@ def test_1_5_2_cooks_reflects_live_registry(cli, home):
     cooks_dir = home / ".config/totchef/cooks"
     cooks_dir.mkdir(parents=True)
     (cooks_dir / "widget_cook.py").write_text(
-        "from totchef.cook_base import StateCook, StateChangeOutcome, StateEntrySpec\n"
-        "class WidgetEntry(StateEntrySpec):\n"
+        "from totchef.cook_base import StateCook, StateChangeOutcome, EntrySpec\n"
+        "class WidgetEntry(EntrySpec):\n"
         "    value: str = ''\n"
         "class WidgetCook(StateCook):\n"
         "    entry_model = WidgetEntry\n"

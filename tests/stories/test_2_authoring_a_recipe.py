@@ -73,16 +73,16 @@ def test_2_2_2_resources_run_in_topological_order(recipe, terminal, totchef):
     assert ran_first < ran_second
 
 
-def test_2_2_3_bad_dependency_is_caught_at_lint(scenario):
+def test_2_2_3_bad_dependency_is_caught_at_lint(scenario, chef):
     """A missing-node dependency, a cycle, or a self-dependency is caught at lint."""
-    scenario().declares("bash", "a", apply="x", depends_on=["nope"]).assert_lint_rejects()
+    chef(scenario().declares("bash", "a", apply="x", depends_on=["nope"])).lint().assert_rejected()
 
-    scenario().declares("bash", "a", apply="x", depends_on=["bash.a"]).assert_lint_rejects()
+    chef(scenario().declares("bash", "a", apply="x", depends_on=["bash.a"])).lint().assert_rejected()
 
     cyclic = scenario()
     cyclic.declares("bash", "a", apply="x", depends_on=["bash.b"])
     cyclic.declares("bash", "b", apply="y", depends_on=["bash.a"])
-    cyclic.assert_lint_rejects()
+    chef(cyclic).lint().assert_rejected()
 
 
 # 2.3 Set shared defaults across a section's entries
@@ -122,19 +122,24 @@ def test_2_3_2_shared_desktop_features_yield_union_per_entry(recipe, totchef, ho
 def test_2_4_1_needs_root_per_entry_escalates_a_privilege_agnostic_cook(recipe, totchef):
     """A cook's `needs_root` sets privilege, but an entry may set `needs_root = true` to escalate a privilege-agnostic cook (`bash`, `file`) per entry."""
     recipe.declares("bash", "root_step", apply="x", needs_root=True)
+    recipe.declares("bash", "user_step", apply="y")  # sibling entry, no grant
     recipe.declares("file", "root_file", path="/etc/x.conf", content="a", needs_root=True)
 
-    totchef.lint()  # accepted: needs_root is a valid per-entry grant
+    totchef.lint().assert_valid()  # accepted: needs_root is a valid per-entry grant
 
     plan = totchef.plan()
-    plan.assert_shows("bash.root_step", "would apply")
+    plan.assert_shows("bash.root_step", "would apply")  # the granted entries plan normally …
     plan.assert_shows("file.root_file", "would apply")
+    plan.assert_shows("bash.user_step", "would apply")  # … alongside the ungranted sibling
+
+    # the per-entry grant actually escalating only that entry (root writes its file, the sibling
+    # writes as the invoking user) is verified end-to-end in the container — test_6_3_2.
 
 
-def test_2_4_2_lint_forbids_needs_root_on_a_subtable_header(scenario):
+def test_2_4_2_lint_forbids_needs_root_on_a_subtable_header(scenario, chef):
     """`needs_root` on a subtable header is forbidden (it would grant root wholesale); it must be per leaf entry, and the error says so."""
     wholesale = scenario()
     wholesale.declares("bash", needs_root=True)  # header-level grant
     wholesale.declares("bash", "step", apply="x")
 
-    wholesale.assert_lint_rejects("needs_root")
+    chef(wholesale).lint().assert_rejected("needs_root")

@@ -3,14 +3,18 @@
 import platform
 import shlex
 import subprocess
+import threading
 from collections.abc import Callable, Generator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from assert_fixtures import HttpAssertions, TerminalAssertions
 from totchef import harness, shell
+from totchef import terminal as terminal_module
 from totchef.registry import cook_registry
 
 
@@ -27,6 +31,36 @@ class RecipeBuilder:
         else:
             target[name] = fields
         return self
+
+
+class ConcurrencyProbe:
+    """Observe how many tracked operations are in flight at once. Arm a barrier of `parties` and each tracked op blocks until that many are simultaneously in flight, so a test proves *real* overlap deterministically: a serialized implementation can never gather `parties` together, each op waits alone, times out, and the recorded `max_inflight` stays at 1."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._inflight = 0
+        self.max_inflight = 0
+        self._barrier: threading.Barrier | None = None
+
+    def arm(self, parties: int, timeout: float = 2.0) -> None:
+        """Require `parties` operations to be in flight together; a tracked op that waits alone past `timeout` gives up rather than hanging the test."""
+        self._barrier = threading.Barrier(parties, timeout=timeout)
+
+    @contextmanager
+    def track(self) -> Generator[None]:
+        with self._lock:
+            self._inflight += 1
+            self.max_inflight = max(self.max_inflight, self._inflight)
+        try:
+            if self._barrier is not None:
+                try:
+                    self._barrier.wait()
+                except threading.BrokenBarrierError:
+                    pass  # serialized: the expected overlap never gathered, max_inflight tells the story
+            yield
+        finally:
+            with self._lock:
+                self._inflight -= 1
 
 
 @dataclass
@@ -56,6 +90,23 @@ class FakeTerminal(TerminalAssertions):
     def __init__(self) -> None:
         self.commands: list[RanCommand] = []
         self._responses: list[Response] = []
+        self.concurrency = ConcurrencyProbe()
+        self._concurrent_matches: tuple[str, ...] = ()
+
+    def expect_concurrent(self, *matches: str, parties: int, timeout: float = 2.0) -> "FakeTerminal":
+        """Expect every command matching one of `matches` to run concurrently with the others — `parties` of them in flight at once. Use for a cook that fans work across a thread pool (e.g. `uv tool install`/`upgrade`); non-matching commands (a serial probe) run normally."""
+        self._concurrent_matches = matches
+        self.concurrency.arm(parties, timeout)
+        return self
+
+    @property
+    def max_concurrent_commands(self) -> int:
+        return self.concurrency.max_inflight
+
+    def _concurrency_ctx(self, line: str):
+        if self._concurrent_matches and any(match in line for match in self._concurrent_matches):
+            return self.concurrency.track()
+        return nullcontext()
 
     def arrange(self, match: str, output: str = "", *, exit_code: int = 0, effect: Callable[[], None] | None = None) -> "FakeTerminal":
         """Arrange the reply for any command matching `match`: its stdout and exit code (default success). `exit_code != 0` makes a `check=True` call raise, a `pre_hook` guard skip, an install hard-fail, etc. `effect` is a side effect a *successful* command has on the world — an installer dropping a binary, say — run after the command so the next probe sees it."""
@@ -80,14 +131,15 @@ class FakeTerminal(TerminalAssertions):
     ) -> subprocess.CompletedProcess:
         argv = list(cmd)
         self.commands.append(RanCommand(argv, stdin, streamed=False))
-        response = self._respond(argv)
-        stdout: str | bytes = response.output if text else response.output.encode()
-        empty: str | bytes = "" if text else b""
-        if check and response.exit_code != 0:
-            raise subprocess.CalledProcessError(response.exit_code, argv, output=stdout)
-        if response.effect:
-            response.effect()
-        return subprocess.CompletedProcess(argv, response.exit_code, stdout=stdout, stderr=empty)
+        with self._concurrency_ctx(shlex.join(argv)):
+            response = self._respond(argv)
+            stdout: str | bytes = response.output if text else response.output.encode()
+            empty: str | bytes = "" if text else b""
+            if check and response.exit_code != 0:
+                raise subprocess.CalledProcessError(response.exit_code, argv, output=stdout)
+            if response.effect:
+                response.effect()
+            return subprocess.CompletedProcess(argv, response.exit_code, stdout=stdout, stderr=empty)
 
     def stream(
         self,
@@ -99,11 +151,12 @@ class FakeTerminal(TerminalAssertions):
         check: bool = True,
     ) -> None:
         self.commands.append(RanCommand(list(cmd), stdin, streamed=True))
-        response = self._respond(list(cmd))
-        if check and response.exit_code != 0:
-            raise subprocess.CalledProcessError(response.exit_code, cmd)
-        if response.effect:
-            response.effect()
+        with self._concurrency_ctx(shlex.join(cmd)):
+            response = self._respond(list(cmd))
+            if check and response.exit_code != 0:
+                raise subprocess.CalledProcessError(response.exit_code, cmd)
+            if response.effect:
+                response.effect()
 
     def reset(self) -> None:
         """Forget every arrangement and recorded command — for a test that runs a second, independent scenario through the same patched boundary."""
@@ -139,6 +192,16 @@ class FakeHttp(HttpAssertions):
     def __init__(self) -> None:
         self.requests: list[str] = []
         self._responses: list[HttpResponse] = []
+        self.concurrency = ConcurrencyProbe()
+
+    def expect_concurrent(self, parties: int, timeout: float = 2.0) -> "FakeHttp":
+        """Expect `parties` fetches to be in flight at once — for a probe pass that looks up latest versions across a thread pool (crates.io, PyPI)."""
+        self.concurrency.arm(parties, timeout)
+        return self
+
+    @property
+    def max_concurrent_requests(self) -> int:
+        return self.concurrency.max_inflight
 
     def arrange(self, match: str, body: bytes | str) -> "FakeHttp":
         """Arrange the body returned for any URL matching `match`."""
@@ -148,9 +211,10 @@ class FakeHttp(HttpAssertions):
     def urlopen(self, request: object, *args: object, **kwargs: object) -> _Reply:
         url = str(getattr(request, "full_url", request))
         self.requests.append(url)
-        for response in self._responses:
-            if response.match in url:
-                return _Reply(response.body)
+        with self.concurrency.track():
+            for response in self._responses:
+                if response.match in url:
+                    return _Reply(response.body)
         raise AssertionError(f"unexpected HTTP GET {url!r}; arrange it with http.arrange({url!r}, ...)")
 
 
@@ -193,10 +257,11 @@ def http(monkeypatch: pytest.MonkeyPatch) -> FakeHttp:
 
 @pytest.fixture(autouse=True)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect `$HOME` to a temp dir so `Path.home()` (and `~`) land there, isolating per-user cooks from the real home."""
+    """Redirect `$HOME` to a temp dir so `Path.home()` (and `~`) land there, isolating per-user cooks from the real home. Also scrub env vars holding an absolute path into the real home (e.g. `BUN_INSTALL`), which would otherwise leak past the `$HOME` redirect."""
     home_dir = tmp_path / "home"
     home_dir.mkdir()
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv("BUN_INSTALL", raising=False)
     return home_dir
 
 
@@ -219,6 +284,41 @@ def fresh_registry() -> Generator[None]:
     cook_registry.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def fresh_runner_colors() -> Generator[None]:
+    """Per-cook log/report colors are assigned into a module-global dict in first-seen order (the palette wraps once exhausted); reset it around every test so assignments don't leak across tests — otherwise the cumulative count decides which hue a cook gets."""
+    terminal_module._runner_colors.clear()
+    yield
+    terminal_module._runner_colors.clear()
+
+
 @pytest.fixture
 def recipe() -> RecipeBuilder:
     return RecipeBuilder()
+
+
+@pytest.fixture
+def scenario() -> Callable[[], RecipeBuilder]:
+    """Arrange an independent recipe with its own fresh builder — for a test that exercises several distinct recipes (e.g. a few ways a dependency can be malformed). Hand the built recipe to `chef` to run it."""
+    return RecipeBuilder
+
+
+@pytest.fixture
+def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Callable[[str, str], None]:
+    """Register a fake third-party cook under the `totchef.cooks` entry-point group, exactly as an installed plugin distribution would — so a story can observe its `plugin:<dist>` origin via `--list-cooks` without building and installing a real package."""
+    from totchef import registry
+    from totchef.cooks.bash_cook import BashCook
+
+    real_entry_points = registry.entry_points
+
+    def register(section: str, dist: str) -> None:
+        plugin = SimpleNamespace(
+            name=section,
+            value=f"{dist}.cooks:Cook",
+            dist=SimpleNamespace(name=dist),
+            load=lambda: BashCook,
+        )
+        monkeypatch.setattr(registry, "entry_points", lambda group: [*real_entry_points(group=group), plugin])
+        registry.cook_registry.cache_clear()
+
+    return register

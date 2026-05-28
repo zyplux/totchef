@@ -1,4 +1,4 @@
-"""Assert half of the prose framework: the run report a test inspects, plus the assertion mixins layered onto the system-boundary doubles (what bash ran, what was fetched)."""
+"""Assert half of the prose framework: the run report a test inspects, plus the assertion mixins layered onto the system-boundary doubles (what bash ran, what was fetched). Operates only on what `totchef` prints and logs — no production imports."""
 
 import json
 import textwrap
@@ -8,9 +8,7 @@ from typing import Any
 
 import pytest
 
-from totchef.cli import cook_node
-from totchef.cook_base import CookResult
-from totchef.harness import SOFT_FAIL_EXIT
+SOFT_FAIL_EXIT = 75  # totchef's public soft-failure exit code (stories §1.1.3) — asserted as a contract, not imported
 
 
 class TerminalAssertions:
@@ -46,8 +44,20 @@ class HttpAssertions:
         assert any(match in url for url in self.requests), f"expected a fetch matching {match!r}, but only fetched: {self.requests or '(nothing)'}"
 
 
-class RecipeRejected(Exception):
-    """Raised by `Totchef.lint` when validation rejects the recipe, carrying the message the operator would see."""
+@dataclass
+class LintReport:
+    """What `lint` produced: whether validation accepted the recipe, and the message an operator would see if it didn't. Asserted with `assert_valid`/`assert_rejected`, mirroring how `plan`/`up` return a RunReport."""
+
+    rejected: bool
+    message: str = ""
+
+    def assert_valid(self) -> None:
+        assert not self.rejected, f"expected the recipe to validate, but lint rejected it:\n{self.message}"
+
+    def assert_rejected(self, snippet: str = "") -> None:
+        """Assert the operator's recipe is refused at lint, optionally carrying `snippet` in the message that tells them how to fix it."""
+        assert self.rejected, "expected the recipe to be rejected at lint, but it validated"
+        assert snippet in self.message, f"recipe was rejected, but the message {self.message!r} did not mention {snippet!r}"
 
 
 SGR_CODES = {
@@ -59,24 +69,35 @@ SGR_CODES = {
 }
 
 
+def _parse_node_rows(full_table: str) -> dict[str, str]:
+    """Map cook-node -> action from the run log's full TOON table (every node, including unchanged). Skips the `[N]{...}:` header and any blank lines; each data row is `node,before,current,latest,action`, so the first and last comma-fields are the identity and what happened to it."""
+    rows: dict[str, str] = {}
+    for line in full_table.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("[", "{", "#")):
+            continue
+        fields = [field.strip().strip('"') for field in stripped.split(",")]
+        if len(fields) >= 2:
+            rows[fields[0]] = fields[-1]
+    return rows
+
+
 @dataclass
 class RunReport:
-    """What `plan`/`up` produced: the chef's per-node results, plus assertion helpers phrased as the operator's expectations."""
+    """What `plan`/`up` showed the operator: the terse report they saw (`report`), the log lines that scrolled past (`logs`), the color-coded table a terminal renders (`terminal_report`), and — read back from the run's log file — the full per-node table (`full_table`, every node including unchanged, which the terse `up` view hides). Assertions are phrased as the operator's expectations; the exit code carries the outcome."""
 
-    results: dict[str, CookResult]
     exit_code: int
     report: str = ""
     logs: str = ""
     terminal_report: str = ""
+    full_table: str = ""
     rows: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for result in self.results.values():
-            for row in result.rows:
-                self.rows[cook_node(result.cook, row.name)] = row.action
+        self.rows = _parse_node_rows(self.full_table)
 
     def assert_report(self, expected: str) -> None:
-        """Assert the whole rendered report (the real `print_report` TOON, captured from the logs) matches `expected`, ignoring surrounding blank lines and uniform indentation so the snapshot can be written flush under the call."""
+        """Assert the terse report an operator saw matches `expected`, ignoring surrounding blank lines and uniform indentation so the snapshot can be written flush under the call."""
         actual = self.report.strip("\n")
         wanted = textwrap.dedent(expected).strip("\n")
         assert actual == wanted, f"report mismatch:\n--- expected ---\n{wanted}\n--- actual ---\n{actual}"
@@ -113,10 +134,15 @@ class RunReport:
 
 @dataclass
 class CliResult:
-    """What a `totchef <command>` invocation showed the operator: the text it printed (stdout and stderr together, as it would scroll past) and the exit code."""
+    """What a `totchef <command>` invocation showed the operator: its stdout, its stderr, and the exit code. `output` is the two together, as they would scroll past a terminal — what most assertions read, since an error surfaces on stderr while a result prints to stdout."""
 
-    output: str
+    stdout: str
     exit_code: int
+    stderr: str = ""
+
+    @property
+    def output(self) -> str:
+        return self.stdout + self.stderr
 
     def assert_succeeded(self) -> None:
         assert self.exit_code == 0, f"command exited {self.exit_code}:\n{self.output}"

@@ -1,4 +1,4 @@
-"""Container fixtures for §6.3.2/§7.3.1: real OS state behind a real sudo, via `totchef up` in a throwaway container; skipped without podman."""
+"""Container fixtures for §7.3.2/§8.3.1: real OS state behind a real sudo, via `totchef up` in a throwaway container; skipped without podman."""
 
 import base64
 import os

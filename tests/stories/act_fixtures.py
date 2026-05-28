@@ -1,124 +1,80 @@
-"""Act half of the prose framework: drive the chef the way a user does (`plan`/`up`/`lint`) and hand back a RunReport to assert against. Runs the real chef in-process; the only things faked are the system boundaries arranged in arrange_fixtures."""
+"""Act half of the prose framework: drive totchef the way a user does — the real `totchef plan`/`up`/`lint` command, in-process, through nothing but its public CLI. Inline mode (TOTCHEF_INLINE) runs every cook in this process so the system-boundary doubles arranged in arrange_fixtures still apply; the report is read back from what the command printed and the log file it wrote."""
 
-import traceback
 from collections.abc import Callable
-from graphlib import TopologicalSorter
+from pathlib import Path
 
 import pytest
-from loguru import logger
-from rich.console import Console
+import tomli_w
 from typer.testing import CliRunner
 
-from arrange_fixtures import FakeTerminal, RecipeBuilder
-from assert_fixtures import CliResult, RecipeRejected, RunReport
-from totchef import terminal
-from totchef.cli import app, print_report
-from totchef.cook_base import CookResult
-from totchef.cook_runner import run_cook
-from totchef.harness import SOFT_FAIL_EXIT
-from totchef.recipe_graph import build_node_graph, build_nodes
-from totchef.schema_lint import validate
+from arrange_fixtures import RecipeBuilder
+from assert_fixtures import CliResult, LintReport, RunReport
+from totchef.cli import app  # the public CLI entrypoint — the one production handle a test is allowed
+
+REPORT_MARKER = "##totchef-report##"
+
+
+def _section(text: str, start: str, end: str) -> str:
+    return text.split(start, 1)[-1].split(end, 1)[0].strip("\n")
+
+
+def _last_report(log_text: str) -> tuple[str, str]:
+    """The full node table and the terse operator view from the run's last report block (an `up` logs the preview plan first, then the converging report — the last block is the one that ran)."""
+    if REPORT_MARKER not in log_text:
+        return "", ""
+    block = log_text.rsplit(REPORT_MARKER, 1)[-1]
+    return _section(block, "##full##", "##shown##"), _section(block, "##shown##", "##end##")
 
 
 class Totchef:
-    """The user action. `plan`/`up`/`lint` drive the real chef against the current recipe, in-process: topo-sort the DAG and run each node directly (no fork, no privilege drop — the bash boundary is mocked, so nothing escalates)."""
+    """The user action: run a real `totchef <command>` against the recipe under test. `plan`/`up` converge (or preview) and hand back a RunReport read from the command's output and log; `lint` validates and reports whether the recipe was accepted."""
 
-    def __init__(self, recipe: RecipeBuilder, terminal: FakeTerminal) -> None:
+    def __init__(self, recipe: RecipeBuilder, workdir: Path) -> None:
         self.recipe = recipe
-        self.terminal = terminal
-
-    def declares(self, section: str, name: str | None = None, **fields) -> "Totchef":
-        """Add a section/entry to this run's recipe (delegates to the recipe builder) and return self, so an independent scenario reads as one chained statement."""
-        self.recipe.declares(section, name, **fields)
-        return self
+        self.workdir = workdir
+        self._runner = CliRunner()
+        self._runs = 0
 
     def plan(self) -> RunReport:
-        return self._run(dry_run=True)
+        result, log_text = self._invoke("plan", color=True)
+        return self._report(result, log_text)
 
     def up(self) -> RunReport:
-        return self._run(dry_run=False)
+        result, log_text = self._invoke("up", color=True)
+        return self._report(result, log_text)
 
-    def lint(self) -> None:
-        try:
-            validate(self.recipe.config)
-        except SystemExit as exit:
-            raise RecipeRejected(str(exit.code)) from exit
+    def lint(self) -> LintReport:
+        """Drive `totchef lint` and hand back what it decided: validated, or rejected with the operator-facing message."""
+        result, _ = self._invoke("lint")
+        return LintReport(rejected=result.exit_code != 0, message=result.output)
 
-    def assert_lint_rejects(self, snippet: str = "") -> None:
-        """Assert the operator's recipe is refused at lint, optionally carrying `snippet` in the message that tells them how to fix it."""
-        try:
-            self.lint()
-        except RecipeRejected as rejection:
-            assert snippet in str(rejection), f"recipe was rejected, but the message {str(rejection)!r} did not mention {snippet!r}"
-            return
-        raise AssertionError("expected the recipe to be rejected at lint, but it validated")
+    def _report(self, result: CliResult, log_text: str) -> RunReport:
+        full_table, terse = _last_report(log_text)
+        return RunReport(
+            exit_code=result.exit_code,
+            report=terse,
+            logs=result.stderr,
+            terminal_report=result.stdout,
+            full_table=full_table,
+        )
 
-    def _run(self, dry_run: bool) -> RunReport:
-        config = self.recipe.config
-        validate(config)
-        nodes = build_nodes(config)
-        order = list(TopologicalSorter(build_node_graph(nodes)).static_order())
-
-        lines: list[str] = []
-        sink = logger.add(lambda message: lines.append(message.record["message"]), format="{message}", level="INFO")
-        results: dict[str, CookResult] = {}
-        try:
-            for node_id in order:
-                try:
-                    result = run_cook(nodes[node_id], config, dry_run)
-                except Exception:
-                    result = CookResult(node_id, "hard_fail", [], traceback.format_exc())
-                results[node_id] = result
-                if result.status == "hard_fail":
-                    break  # chef aborts the apply on a hard failure
-        finally:
-            logger.remove(sink)
-
-        for result in results.values():  # the failure lines `cli.apply` prints after the run
-            if result.status in ("hard_fail", "soft_fail") and result.message:
-                lines.append(f"[{result.cook}] {result.message}")
-
-        title = "Plan" if dry_run else "Report"
-        report = _capture_report(results, dry_run, title)
-        terminal_report = _capture_colored_report(results, dry_run, title)
-        return RunReport(results, _exit_code(results), report=report, logs="\n".join(lines), terminal_report=terminal_report)
-
-
-def _capture_report(results: dict[str, CookResult], dry_run: bool, title: str) -> str:
-    """Run the real `print_report` and capture the plain TOON it logs off-terminal, by attaching a temporary loguru sink around it — so the snapshot is exactly what an operator sees, not a reconstruction."""
-    lines: list[str] = []
-    sink = logger.add(lambda message: lines.append(message.record["message"]), format="{message}", level="INFO")
-    try:
-        print_report(results, dry_run, title=title)
-    finally:
-        logger.remove(sink)
-    return "\n".join(lines)
-
-
-def _capture_colored_report(results: dict[str, CookResult], dry_run: bool, title: str) -> str:
-    """Render the same report as it appears on an interactive terminal — the rich, color-coded table — by forcing `terminal`'s console to a capturing, color-emitting one for the duration."""
-    console = Console(force_terminal=True, color_system="standard", width=120)
-    original_console, original_interactive = terminal.console, terminal.is_interactive
-    terminal.console, terminal.is_interactive = (lambda: console), (lambda: True)
-    try:
-        with console.capture() as captured:
-            print_report(results, dry_run, title=title)
-        return captured.get()
-    finally:
-        terminal.console, terminal.is_interactive = original_console, original_interactive
-
-
-def _exit_code(results: dict[str, CookResult]) -> int:
-    if any(result.status == "hard_fail" for result in results.values()):
-        return 1
-    if any(result.status == "soft_fail" for result in results.values()):
-        return SOFT_FAIL_EXIT
-    return 0
+    def _invoke(self, command: str, color: bool = False) -> tuple[CliResult, str]:
+        """Write the recipe to a fresh TOML file and run `totchef <command>` against it in inline mode (no fork, no sudo), capturing stdout, stderr, exit code, and the log file it wrote."""
+        self._runs += 1
+        recipe_path = self.workdir / f"recipe-{self._runs}.toml"
+        recipe_path.write_text(tomli_w.dumps(self.recipe.config))
+        log_file = self.workdir / f"run-{self._runs}.log"
+        env = {"TOTCHEF_INLINE": "1", "TOTCHEF_LOG_FILE": str(log_file)}
+        if color:
+            env["FORCE_COLOR"] = "1"
+        outcome = self._runner.invoke(app, [command, "--recipe", str(recipe_path)], env=env, color=color, catch_exceptions=False)
+        log_text = log_file.read_text() if log_file.exists() else ""
+        return CliResult(outcome.stdout, outcome.exit_code, stderr=outcome.stderr), log_text
 
 
 @pytest.fixture
-def totchef(recipe: RecipeBuilder, terminal: FakeTerminal) -> Totchef:
-    return Totchef(recipe, terminal)
+def totchef(recipe: RecipeBuilder, tmp_path: Path) -> Totchef:
+    return Totchef(recipe, tmp_path)
 
 
 class Cli:
@@ -129,8 +85,7 @@ class Cli:
 
     def run(self, *args: str) -> CliResult:
         outcome = self._runner.invoke(app, list(args))
-        stderr = outcome.stderr if outcome.stderr_bytes is not None else ""
-        return CliResult(outcome.stdout + stderr, outcome.exit_code)
+        return CliResult(outcome.stdout, outcome.exit_code, stderr=outcome.stderr)
 
 
 @pytest.fixture
@@ -139,10 +94,10 @@ def cli() -> Cli:
 
 
 @pytest.fixture
-def scenario(terminal: FakeTerminal) -> Callable[[], Totchef]:
-    """Build an independent run with its own fresh recipe — for a test that exercises several distinct recipes (e.g. a few ways a dependency can be malformed) against the same mocked system."""
+def chef(tmp_path: Path) -> Callable[[RecipeBuilder], Totchef]:
+    """Run totchef against an independently arranged recipe — for a test that exercises several distinct recipes (e.g. a few ways a dependency can be malformed) against the same mocked system. Pairs with `scenario`, which arranges those recipes."""
 
-    def build() -> Totchef:
-        return Totchef(RecipeBuilder(), terminal)
+    def run(recipe: RecipeBuilder) -> Totchef:
+        return Totchef(recipe, tmp_path)
 
-    return build
+    return run

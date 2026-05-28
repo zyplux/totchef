@@ -63,7 +63,7 @@ snapshot can't pin — a `local:<path>` origin, a temp path, a timestamp.
   `assert_lists` (targeted row), `assert_succeeded`/`assert_failed`.
 - `apply_in_container` — run a real `totchef up` inside a throwaway container as a
   non-root user and read back ownership (`run.owners[path]`, `run.log_owner`). For the
-  few stories whose criterion is the real privilege drop (§6.3.2, §7.3.1), which the
+  few stories whose criterion is the real privilege drop (§7.3.2, §8.3.1), which the
   in-process suite can't observe. Skips when podman is absent. See `container_fixtures`.
 
 ## Arrange, act, check — each line says which it is
