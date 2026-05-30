@@ -12,15 +12,15 @@ from pathlib import Path
 
 SYSLOG_IDENT = "egpu-prime"
 NVIDIA_PCI_VENDOR_ID = "0x10de"
-PCI_DEVICES = Path("/sys/bus/pci/devices")
-DRI_BY_PATH = Path("/dev/dri/by-path")
-ENV_FILE = Path("/etc/environment.d/10-egpu-primary.conf")
-BOOT_VGA_OVERRIDES = Path("/run/egpu-boot-vga")
-NVIDIA_DISPLAY_CLASSES = ("[0300]", "[0302]")
+PCI_DEVICES_DIR = Path("/sys/bus/pci/devices")
+DRI_BY_PATH_DIR = Path("/dev/dri/by-path")
+EGPU_PRIMARY_CONFIG_FILE = Path("/etc/environment.d/10-egpu-primary.conf")
+BOOT_VGA_OVERRIDES_DIR = Path("/run/egpu-boot-vga")
+NVIDIA_DISPLAY_CLASS_PREFIXES = ("0x0300", "0x0302")
 
 
-def log(message: str) -> None:
-    syslog.syslog(message)
+def log(message: str, level: int = syslog.LOG_INFO) -> None:
+    syslog.syslog(level, message)
     print(f"{SYSLOG_IDENT}: {message}", file=sys.stderr)
 
 
@@ -30,7 +30,7 @@ def run(*command: str) -> subprocess.CompletedProcess[str]:
 
 def read_pci_attr(pci_address: str, attr: str) -> str:
     try:
-        return (PCI_DEVICES / pci_address / attr).read_text().strip()
+        return (PCI_DEVICES_DIR / pci_address / attr).read_text().strip()
     except OSError:
         return ""
 
@@ -45,14 +45,18 @@ def poll_until(ready: Callable[[], bool], retries: int) -> bool:
 
 
 def iter_dri_cards() -> Iterator[tuple[str, Path]]:
-    for link in sorted(DRI_BY_PATH.glob("pci-*-card")):
+    for link in sorted(DRI_BY_PATH_DIR.glob("pci-*-card")):
         pci_address = link.name.removeprefix("pci-").removesuffix("-card")
         yield pci_address, link
 
 
 def is_nvidia_on_pci() -> bool:
-    listing = run("lspci", "-nn", "-d", "10de:").stdout
-    return any(cls in listing for cls in NVIDIA_DISPLAY_CLASSES)
+    for pci_address in PCI_DEVICES_DIR.glob("*"):
+        if read_pci_attr(pci_address.name, "vendor") != NVIDIA_PCI_VENDOR_ID:
+            continue
+        if read_pci_attr(pci_address.name, "class").startswith(NVIDIA_DISPLAY_CLASS_PREFIXES):
+            return True
+    return False
 
 
 def is_nvidia_drm_node_ready() -> bool:
@@ -60,19 +64,19 @@ def is_nvidia_drm_node_ready() -> bool:
 
 
 def bind_boot_vga_override(boot_vga_value: str, target: Path) -> bool:
-    source = BOOT_VGA_OVERRIDES / ("one" if boot_vga_value == "1" else "zero")
+    source = BOOT_VGA_OVERRIDES_DIR / ("one" if boot_vga_value == "1" else "zero")
     mount_run = run("mount", "--bind", "-o", "ro", str(source), str(target))
     if mount_run.returncode != 0:
-        log(f"boot_vga: bind {target} failed: {mount_run.stderr.strip()}")
+        log(f"boot_vga: bind {target} failed: {mount_run.stderr.strip()}", syslog.LOG_WARNING)
         return False
     return True
 
 
 def flip_boot_vga() -> None:
-    BOOT_VGA_OVERRIDES.mkdir(parents=True, exist_ok=True)
-    (BOOT_VGA_OVERRIDES / "one").write_text("1")
-    (BOOT_VGA_OVERRIDES / "zero").write_text("0")
-    for boot_vga_file in PCI_DEVICES.glob("*/boot_vga"):
+    BOOT_VGA_OVERRIDES_DIR.mkdir(parents=True, exist_ok=True)
+    (BOOT_VGA_OVERRIDES_DIR / "one").write_text("1")
+    (BOOT_VGA_OVERRIDES_DIR / "zero").write_text("0")
+    for boot_vga_file in PCI_DEVICES_DIR.glob("*/boot_vga"):
         pci_address = boot_vga_file.parent.name
         is_primary = boot_vga_file.read_text().strip() == "1"
         is_nvidia = read_pci_attr(pci_address, "vendor") == NVIDIA_PCI_VENDOR_ID
@@ -92,9 +96,9 @@ def is_openable(node: str) -> bool:
 
 
 def remove_env_file(reason: str) -> None:
-    if ENV_FILE.exists():
-        ENV_FILE.unlink()
-        log(f"removed {ENV_FILE} ({reason})")
+    if EGPU_PRIMARY_CONFIG_FILE.exists():
+        EGPU_PRIMARY_CONFIG_FILE.unlink()
+        log(f"removed {EGPU_PRIMARY_CONFIG_FILE} ({reason})")
 
 
 def write_compositor_primary() -> None:
@@ -121,10 +125,10 @@ def write_compositor_primary() -> None:
     if vendor_id and device_id:
         lines.append(f"VULKAN_ADAPTER={vendor_id}:{device_id}")
 
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ENV_FILE.write_text("\n".join(lines) + "\n")
-    ENV_FILE.chmod(0o644)
-    log(f"wrote {ENV_FILE}: {' | '.join(lines)}")
+    EGPU_PRIMARY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    EGPU_PRIMARY_CONFIG_FILE.write_text("\n".join(lines) + "\n")
+    EGPU_PRIMARY_CONFIG_FILE.chmod(0o644)
+    log(f"wrote {EGPU_PRIMARY_CONFIG_FILE}: {' | '.join(lines)}")
 
 
 def query_prime() -> str:
@@ -138,11 +142,14 @@ def select_prime(prime_name: str, current: str) -> int:
         log(f"switched to {prime_name}")
         return 0
     error = (switch_run.stdout + switch_run.stderr).strip().replace("\n", "|")
-    log(f"prime-select {prime_name} failed: {error}")
+    log(f"prime-select {prime_name} failed: {error}", syslog.LOG_WARNING)
     # `prime-select nvidia` refuses without the driver package; fall back so login still works.
     if prime_name == "nvidia" and current != "on-demand":
-        log("falling back to on-demand")
-        run("prime-select", "on-demand")
+        log("falling back to on-demand so login still works", syslog.LOG_WARNING)
+        fallback_run = run("prime-select", "on-demand")
+        if fallback_run.returncode != 0:
+            fallback_error = (fallback_run.stdout + fallback_run.stderr).strip().replace("\n", "|")
+            log(f"fallback to on-demand also failed: {fallback_error}", syslog.LOG_WARNING)
     return 1
 
 
@@ -157,7 +164,7 @@ def main() -> int:
         # appears on the bus; the env file resolves those paths, so skipping the wait loses
         # the race and KWIN_DRM_DEVICES is silently never written.
         if not poll_until(is_nvidia_drm_node_ready, retries=15):
-            log("nvidia DRM node did not appear in time; compositor hint skipped")
+            log("nvidia DRM node did not appear in time; recomputing compositor hint (cleared if still unresolved)", syslog.LOG_WARNING)
         write_compositor_primary()
     else:
         remove_env_file("eGPU not present")
