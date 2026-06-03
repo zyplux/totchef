@@ -122,7 +122,6 @@ Pin-Priority: 900
 EOF
 '''
 current_state = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
-desired_state = "present"
 depends_on = ["file.write_if_changed"]
 
 [bash.code_insiders_debconf]
@@ -139,7 +138,12 @@ apt-get update
 apt-get install -y --no-install-recommends curl gnupg ca-certificates nala
 '''
 current_state = "command -v nala >/dev/null && echo present || echo absent"
-desired_state = "present"
+
+[bash.nix]
+needs_root = true
+apply = "curl -sSfL https://artifacts.nixos.org/nix-installer | sh -s -- install --no-confirm"
+current_state = "test -e /nix/var/nix/profiles/default/bin/nix && echo present || echo absent"
+depends_on = ["bash.apt_prereqs"]
 
 [apt_repo]
 depends_on = ["bash.apt_prereqs"]
@@ -187,6 +191,8 @@ packages = [
     "gh",
     "signal-desktop",
     "podman",
+    "labwc",
+    "hyprland",
 ]
 
 [snap]

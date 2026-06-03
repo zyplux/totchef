@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Boot-time eGPU-primary selector (egpu-prime.service, as root): when an NVIDIA eGPU is on the bus, flip boot_vga + write KWIN_DRM_DEVICES/VULKAN_ADAPTER + `prime-select nvidia`, else revert. STANDALONE: system python3 + stdlib only — a non-stdlib import breaks the graphical session at boot. Resolves /dev/dri/by-path to cardN every boot (a baked-in card number caused an earlier login loop)."""
+"""Boot-time eGPU-primary selector (egpu-prime.service, as root): when an NVIDIA eGPU is on the bus, flip boot_vga + write KWIN_DRM_DEVICES/WLR_DRM_DEVICES/AQ_DRM_DEVICES/VULKAN_ADAPTER + `prime-select nvidia`, else revert. STANDALONE: system python3 + stdlib only — a non-stdlib import breaks the graphical session at boot. Resolves /dev/dri/by-path to cardN every boot (a baked-in card number caused an earlier login loop)."""
 
 import os
 import shutil
@@ -119,7 +119,12 @@ def write_compositor_primary() -> None:
         remove_env_file("no eGPU card resolved")
         return
 
-    lines = ["KWIN_DRM_DEVICES=" + ":".join(primary_nodes + secondary_nodes)]
+    drm_devices = ":".join(primary_nodes + secondary_nodes)
+    lines = [
+        f"KWIN_DRM_DEVICES={drm_devices}",
+        f"WLR_DRM_DEVICES={drm_devices}",
+        f"AQ_DRM_DEVICES={drm_devices}",
+    ]
     vendor_id = read_pci_attr(egpu_address, "vendor").removeprefix("0x")
     device_id = read_pci_attr(egpu_address, "device").removeprefix("0x")
     if vendor_id and device_id:

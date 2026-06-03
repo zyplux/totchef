@@ -10,7 +10,7 @@ from totchef.cook_base import StateChangeOutcome, StateCook, EntrySpec
 
 class BashEntry(EntrySpec):
     current_state: str | None = None
-    desired_state: str = ""
+    desired_state: str = "present"
     apply: str
 
 
