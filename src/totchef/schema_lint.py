@@ -22,7 +22,7 @@ def find_schema_problems(config: dict, nodes: dict[str, Node]) -> list[str]:
         if model is None:
             continue
         try:
-            model.model_validate(node_slice(config, node))
+            model.model_validate(node_slice(config, node), context={"entry_name": node.entry})
         except ValidationError as exc:
             for err in exc.errors():
                 loc = ".".join(str(part) for part in err["loc"]) or "(entry)"

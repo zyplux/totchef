@@ -1,27 +1,27 @@
 [url.bun]
-url = "https://bun.sh/install"
+url = "bun.sh/install"
 update_action = ["upgrade"]
 
 [url.uv]
-url = "https://astral.sh/uv/install.sh"
+url = "astral.sh/uv/install.sh"
 update_action = ["self", "update"]
 
 [url.claude]
-url = "https://claude.ai/install.sh"
+url = "claude.ai/install.sh"
 update_action = ["update"]
 
 [url.rustup]
-url = "https://sh.rustup.rs"
+url = "sh.rustup.rs"
 args = ["-y"]
 update_action = ["update"]
 
 [url.herdr]
-url = "https://herdr.dev/install.sh"
+url = "herdr.dev/install.sh"
 update_action = ["update"]
 update_guard = "command -v herdr >/dev/null || exit 0; herdr server stop || true; for _ in {1..30}; do herdr status server | grep -q 'not running' && exit 0; sleep 0.1; done; exit 1"
 
 [url.agy]
-url = "https://antigravity.google/cli/install.sh"
+url = "antigravity.google/cli/install.sh"
 
 [cargo]
 depends_on = ["url.rustup"]
@@ -46,11 +46,9 @@ packages = [
 ]
 post_hook = 'mkdir -p "$HOME/.local/bin" && ln -sf "${BUN_INSTALL:-$HOME/.bun}/bin/pi" "$HOME/.local/bin/pi"'
 
-[sys_bin.write_if_changed]
-source = "write-if-changed.py"
+[usr_local_bin.write-if-changed]
 
-[user_bin.ctop]
-source = "ctop.py"
+[local_bin.ctop]
 
 [file.trusted_gpgd_hardening]
 needs_root = true
@@ -73,16 +71,11 @@ GRUB_CMDLINE_LINUX_DEFAULT="$(echo "$GRUB_CMDLINE_LINUX_DEFAULT" | sed -E 's/ *m
 """
 post_hook = "update-grub"
 
-[file.egpu_switch]
-needs_root = true
-source = "egpu-prime-switch.py"
-path = "/usr/local/sbin/egpu-prime-switch"
-mode = "0755"
+[usr_local_sbin.egpu-prime-switch]
 depends_on = ["apt_pkg"]
 
-[file.egpu_service]
+[file.egpu-prime]
 needs_root = true
-source = "egpu-prime.service"
 path = "/etc/systemd/system/egpu-prime.service"
 mode = "0644"
 depends_on = ["apt_pkg"]
@@ -122,7 +115,7 @@ Pin-Priority: 900
 EOF
 '''
 current_state = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
-depends_on = ["sys_bin.write_if_changed"]
+depends_on = ["usr_local_bin.write-if-changed"]
 
 [bash.code_insiders_debconf]
 needs_root = true
@@ -149,26 +142,32 @@ post_hook = 'echo "extra-experimental-features = nix-command flakes" >> /etc/nix
 [apt_repo]
 depends_on = ["bash.apt_prereqs"]
 
-[apt_repo."debian.griffo.io"]
-key_url = "https://debian.griffo.io/EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc"
-uris = "https://debian.griffo.io/apt"
+[apt_repo.griffo]
+url = "debian.griffo.io"
+key_url = "EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc"
+uris = "apt"
 suites = "{release}"
 
 [apt_repo.brave-browser]
-key_url = "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
-uris = "https://brave-browser-apt-release.s3.brave.com"
+url = "brave-browser-apt-release.s3.brave.com"
+key_url = "brave-browser-archive-keyring.gpg"
 
+# vscode.sources/microsoft.gpg are the names the code package's postinst itself
+# maintains (debconf add-microsoft-repo); owning them means asserting presence,
+# not fighting it.
 [apt_repo.vscode]
-key_url = "https://packages.microsoft.com/keys/microsoft.asc"
-uris = "https://packages.microsoft.com/repos/code"
+url = "packages.microsoft.com"
+key_url = "keys/microsoft.asc"
+uris = "repos/code"
+keyring = "/usr/share/keyrings/microsoft.gpg"
 
 [apt_repo.github-cli]
-key_url = "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
-uris = "https://cli.github.com/packages"
+url = "cli.github.com/packages"
+key_url = "githubcli-archive-keyring.gpg"
 
 [apt_repo.signal-desktop]
-key_url = "https://updates.signal.org/desktop/apt/keys.asc"
-uris = "https://updates.signal.org/desktop/apt"
+url = "updates.signal.org/desktop/apt"
+key_url = "keys.asc"
 suites = "xenial"
 
 [apt_pkg]

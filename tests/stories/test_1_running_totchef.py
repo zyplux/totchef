@@ -6,8 +6,8 @@ GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version t
 # 1.1 Apply a recipe to converge the system
 
 
-def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, terminal, totchef, tmp_path, cli, monkeypatch):
-    """`totchef up` resolves the recipe, escalates to root, then validates, previews, and executes — creating or updating every resource that differs."""
+def test_1_1_1_up_resolves_validates_escalates_previews_then_executes(recipe, terminal, totchef, tmp_path, cli, monkeypatch):
+    """`totchef up` resolves the recipe, validates it, escalates to root, then previews and executes — creating or updating every resource that differs."""
     target = tmp_path / "drop.conf"
     recipe.declares("file", "drop", path=str(target), content="X=1\n")
     recipe.declares("bash", "tweak", current_state="probe", desired_state="ok", apply="make-it-ok")
@@ -20,14 +20,14 @@ def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, te
     report.assert_shows("bash.tweak", "applied")  # updated
     assert target.read_text() == "X=1\n"
 
-    # escalation comes first: even an invalid recipe re-execs under sudo *before* validation surfaces
+    # validation comes first: an invalid recipe is rejected before the sudo re-exec ever happens
     invalid = tmp_path / "invalid.toml"
     invalid.write_text("[nosuchsection]\nx = 1\n")
     escalated: dict = {}
 
     def capture_exec(target: str, argv: list[str]) -> None:
         escalated["target"] = target
-        raise SystemExit(0)  # sudo replaces the process — control never returns to validate the recipe
+        raise SystemExit(0)  # sudo would replace the process here
 
     monkeypatch.setattr("os.geteuid", lambda: 1000)  # not root yet
     monkeypatch.setattr("os.execvp", capture_exec)
@@ -35,8 +35,9 @@ def test_1_1_1_up_resolves_escalates_validates_previews_then_executes(recipe, te
 
     rejected = cli.run("up", "--recipe", str(invalid))
 
-    assert escalated["target"] == "sudo"  # escalated …
-    assert "no cook registered" not in rejected.output  # … before the recipe was validated, so the schema error never surfaced
+    assert not escalated  # rejected before any sudo prompt …
+    rejected.assert_failed()
+    rejected.assert_prints("no cook registered")  # … with the schema error on the real stderr
 
 
 def test_1_1_2_up_is_idempotent_rerun_reports_nothing_changed(recipe, totchef, tmp_path):
@@ -61,6 +62,18 @@ def test_1_1_3_exit_code_communicates_outcome(scenario, chef, terminal, tmp_path
     hard = scenario().declares("bash", "b", apply="boom")
     terminal.arrange("boom", exit_code=1)
     chef(hard).up().assert_hard_failed()
+
+
+def test_1_1_4_invalid_recipe_rejects_the_run_before_any_apply(recipe, totchef, tmp_path):
+    """Every run lints the recipe first: one invalid entry rejects the whole `up` before any cook applies, so even the valid entries' targets stay untouched."""
+    valid_target = tmp_path / "ok.conf"
+    recipe.declares("file", "ok", path=str(valid_target), content="X=1\n")
+    recipe.declares("file", "broken", path=str(tmp_path / "broken"), content="a", typo=1)
+
+    rejected = totchef.up()
+
+    rejected.assert_rejected("typo")
+    assert not valid_target.exists()  # validation gated the run; nothing applied
 
 
 # 1.2 Preview changes without touching the system
@@ -222,7 +235,7 @@ def test_1_4_3_no_recipe_found_lists_searched_locations(cli, tmp_path, monkeypat
 def test_1_5_1_cooks_lists_section_scope_and_origin(cli):
     """`totchef --list-cooks` prints section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) for every resolvable cook."""
     cli.run("--list-cooks").assert_output("""
-        [14]{section,scope,origin}:
+        [15]{section,scope,origin}:
           apt_pkg,root,built-in
           apt_repo,root,built-in
           bash,user,built-in
@@ -231,11 +244,12 @@ def test_1_5_1_cooks_lists_section_scope_and_origin(cli):
           chromium_flags,user,built-in
           desktop,user,built-in
           file,user,built-in
+          local_bin,user,built-in
           settings,user,built-in
           snap,root,built-in
-          sys_bin,root,built-in
           url,user,built-in
-          user_bin,user,built-in
+          usr_local_bin,root,built-in
+          usr_local_sbin,root,built-in
           uv,user,built-in
     """)
 

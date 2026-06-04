@@ -125,6 +125,12 @@ class RunReport:
     def assert_succeeded(self) -> None:
         assert self.exit_code == 0, f"expected success (exit 0), got exit {self.exit_code}"
 
+    def assert_rejected(self, snippet: str = "") -> None:
+        """Assert the run was refused at validation — nonzero exit carrying `snippet` in the lint message, mirroring LintReport.assert_rejected."""
+        refusal = self.terminal_report + self.logs
+        assert self.exit_code != 0, "expected the run to be rejected at validation, but it exited 0"
+        assert snippet in refusal, f"run was rejected, but the message {refusal!r} did not mention {snippet!r}"
+
     def assert_soft_failed(self) -> None:
         assert self.exit_code == SOFT_FAIL_EXIT, f"expected soft failure (exit {SOFT_FAIL_EXIT}), got exit {self.exit_code}"
 

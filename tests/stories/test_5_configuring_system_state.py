@@ -76,11 +76,28 @@ def test_5_1_4_repo_configured_only_when_keyring_and_sources_both_exist(recipe, 
     totchef.plan().assert_shows("apt_repo.vendor", "ok")
 
 
+def test_5_1_5_relative_urls_resolve_against_the_repo_url(recipe, scenario, chef, apt_keyrings_dir, apt_sources_dir, http, totchef):
+    """Relative `key_url`/`uris` — or an omitted `uris` — resolve against `url` (scheme optional, https assumed); the files keep the entry's name; a relative URL without `url` is rejected."""
+    recipe.declares("apt_repo", "vendor", url="vendor.example/apt", key_url="key.gpg")
+    http.arrange("https://vendor.example/apt/key.gpg", "raw-key")
+
+    totchef.up().assert_succeeded()
+
+    keyring = apt_keyrings_dir / "vendor.gpg"
+    assert keyring.read_bytes() == b"raw-key"
+    sources_text = (apt_sources_dir / "vendor.sources").read_text()
+    assert "URIs: https://vendor.example/apt" in sources_text
+    assert f"Signed-By: {keyring}" in sources_text
+
+    baseless = scenario().declares("apt_repo", "vendor", key_url="key.gpg")
+    chef(baseless).lint().assert_rejected("set `url` or absolute URLs")
+
+
 # 5.2 Install files with exact content
 
 
 def test_5_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, scenario, chef, totchef, tmp_path):
-    """`[file.<name>]` writes from inline content or a bundled source asset with a mode; exactly one of content/source must be set."""
+    """`[file.<name>]` writes from inline content or a bundled source asset with a mode; setting both is rejected."""
     inline = tmp_path / "drop.conf"
     bundled = tmp_path / "write-if-changed.py"
     recipe.declares("file", "drop", path=str(inline), content="X=1\n", mode="0600")
@@ -93,7 +110,7 @@ def test_5_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, scen
     assert bundled.read_bytes()  # copied verbatim from the bundled asset
 
     both = scenario().declares("file", "x", path=str(inline), content="a", source="write-if-changed.py")
-    chef(both).lint().assert_rejected()  # exactly one of content/source must be set
+    chef(both).lint().assert_rejected()  # content and source together are rejected
 
 
 def test_5_2_2_file_diffed_by_content_hash(recipe, totchef, tmp_path):
@@ -146,6 +163,22 @@ def test_5_2_5_file_is_privilege_agnostic_root_per_entry(recipe, totchef, cli, t
     plan.assert_shows("file.user_file", "would apply")  # … alongside the ungranted sibling
 
     # the grant actually escalating only that entry is verified end-to-end in the container — test_6_3_2
+
+
+def test_5_2_6_source_defaults_to_the_bundled_file_named_after_the_entry(recipe, scenario, chef, bundled_files, totchef, tmp_path):
+    """With neither `content` nor `source`, the entry installs the unique bundled file whose stem matches the entry name; zero or several matches fail lint asking for an explicit `source`."""
+    (bundled_files / "motd.txt").write_text("welcome\n")
+    target = tmp_path / "motd"
+    recipe.declares("file", "motd", path=str(target))
+
+    totchef.up().assert_shows("file.motd", "applied")
+    assert target.read_text() == "welcome\n"
+
+    (bundled_files / "motd.conf").write_text("rival\n")
+    totchef.lint().assert_rejected("set `source` explicitly")  # two bundled stems now match — ambiguous
+
+    ghost = scenario().declares("file", "ghost", path=str(target))
+    chef(ghost).lint().assert_rejected("no bundled file")
 
 
 # 5.3 Run arbitrary idempotent shell steps
@@ -202,14 +235,14 @@ def test_5_3_4_bash_is_privilege_agnostic_root_per_entry(recipe, totchef, cli):
 # 5.4 Install versioned commands onto the PATH
 
 
-def test_5_4_1_sys_bin_and_user_bin_install_command_named_after_source_stem(recipe, home, sys_bin_dir, totchef):
-    """`[sys_bin.<name>]` installs a bundled script to /usr/local/bin and `[user_bin.<name>]` to ~/.local/bin — mode 0755, command named after the source stem, only `source` declared."""
-    recipe.declares("sys_bin", "write_if_changed", source="write-if-changed.py")
-    recipe.declares("user_bin", "ctop", source="ctop.py")
+def test_5_4_1_usr_local_bin_and_local_bin_install_command_named_after_source_stem(recipe, home, usr_local_bin_dir, totchef):
+    """`[usr_local_bin.<name>]` installs a bundled script to /usr/local/bin and `[local_bin.<name>]` to ~/.local/bin — mode 0755, command named after the source stem, only `source` declared."""
+    recipe.declares("usr_local_bin", "write_if_changed", source="write-if-changed.py")
+    recipe.declares("local_bin", "ctop", source="ctop.py")
 
     totchef.up().assert_succeeded()
 
-    system_command = sys_bin_dir / "write-if-changed"
+    system_command = usr_local_bin_dir / "write-if-changed"
     user_command = home / ".local/bin/ctop"
     assert system_command.read_text().startswith("#!")  # the bundled asset, copied verbatim
     assert user_command.read_text().startswith("#!")
@@ -224,25 +257,25 @@ def test_5_4_2_version_decides_the_update_not_content(recipe, home, bundled_file
     installed = home / ".local/bin/tool"
     installed.parent.mkdir(parents=True)
     installed.write_text('#!/bin/bash\n__version__="1.0.0"\n')
-    recipe.declares("user_bin", "tool", source="tool.sh")
+    recipe.declares("local_bin", "tool", source="tool.sh")
 
     report = totchef.up()
 
-    report.assert_shows("user_bin.tool", "applied")
-    assert "user_bin.tool,1.0.0,2.0.0,2.0.0,applied" in report.full_table  # before/current/latest read as versions
+    report.assert_shows("local_bin.tool", "applied")
+    assert "local_bin.tool,1.0.0,2.0.0,2.0.0,applied" in report.full_table  # before/current/latest read as versions
     assert installed.read_text() == bash_tool
 
     installed.write_text(installed.read_text() + "# local tweak\n")  # same version, different bytes
 
-    totchef.up().assert_shows("user_bin.tool", "unchanged")
+    totchef.up().assert_shows("local_bin.tool", "unchanged")
     assert "# local tweak" in installed.read_text()  # equal versions never reinstall
 
 
 def test_5_4_3_lint_statically_rejects_scripts_missing_version_or_help(recipe, scenario, chef, totchef, bundled_files, tmp_path):
-    """A command that doesn't embed `__version__` or offer `--version`/`--help` can't enter sys_bin/user_bin — lint rejects it statically, never executing it."""
+    """A command that doesn't embed `__version__` or offer `--version`/`--help` can't enter a bin cook — lint rejects it statically, never executing it."""
     sentinel = tmp_path / "executed"
     (bundled_files / "naked.py").write_text(f'from pathlib import Path\n\nPath("{sentinel}").write_text("ran")\n')
-    recipe.declares("sys_bin", "naked", source="naked.py")
+    recipe.declares("usr_local_bin", "naked", source="naked.py")
 
     lint = totchef.lint()
 
@@ -253,7 +286,7 @@ def test_5_4_3_lint_statically_rejects_scripts_missing_version_or_help(recipe, s
 
     vetted = 'import argparse\n\n__version__ = "1.0.0"\n\nparser = argparse.ArgumentParser()\nparser.add_argument("--version", action="version", version=__version__)\n'
     (bundled_files / "vetted.py").write_text(vetted)
-    good = scenario().declares("user_bin", "vetted", source="vetted.py")
+    good = scenario().declares("local_bin", "vetted", source="vetted.py")
     chef(good).lint().assert_valid()
 
 
@@ -261,16 +294,43 @@ def test_5_4_4_command_may_be_any_language_even_a_binary(recipe, home, bundled_f
     """The contract markers are read off the file's bytes, so a compiled binary qualifies — embed `__version__ = "<version>"` as a constant string."""
     binary = b'\x7fELF\x02\x01junk\x00__version__ = "3.1.4"\x00usage: tool [--version] [--help]\x00\xff\xfe\xfd'
     (bundled_files / "tool.bin").write_bytes(binary)
-    recipe.declares("user_bin", "tool", source="tool.bin")
+    recipe.declares("local_bin", "tool", source="tool.bin")
 
     report = totchef.up()
 
-    report.assert_shows("user_bin.tool", "applied")
-    assert "user_bin.tool,absent,3.1.4,3.1.4,applied" in report.full_table
+    report.assert_shows("local_bin.tool", "applied")
+    assert "local_bin.tool,absent,3.1.4,3.1.4,applied" in report.full_table
     assert (home / ".local/bin/tool").read_bytes() == binary  # installed verbatim, bytes untouched
 
 
-def test_5_4_5_sys_bin_is_always_root_user_bin_is_user_scoped(cli):
-    """`sys_bin` lists as a root cook (its domain is /usr/local/bin); `user_bin` stays user-scoped."""
-    cli.run("--list-cooks").assert_lists("sys_bin", scope="root")
-    cli.run("--list-cooks").assert_lists("user_bin", scope="user")
+def test_5_4_5_usr_local_bin_is_always_root_local_bin_is_user_scoped(cli):
+    """`usr_local_bin` lists as a root cook (its domain is /usr/local/bin); `local_bin` stays user-scoped."""
+    cli.run("--list-cooks").assert_lists("usr_local_bin", scope="root")
+    cli.run("--list-cooks").assert_lists("local_bin", scope="user")
+
+
+def test_5_4_6_source_defaults_to_the_bundled_command_named_after_the_entry(recipe, home, bundled_files, totchef):
+    """With no `source`, the entry installs the unique bundled command whose stem matches the entry name — `[local_bin.tool]` needs no keys at all."""
+    tool = '#!/bin/bash\n__version__="1.2.0"\ncase "$1" in --version) echo "$__version__";; --help) echo "usage: tool";; esac\n'
+    (bundled_files / "tool.sh").write_text(tool)
+    recipe.declares("local_bin", "tool")
+
+    report = totchef.up()
+
+    report.assert_shows("local_bin.tool", "applied")
+    assert "local_bin.tool,absent,1.2.0,1.2.0,applied" in report.full_table  # the resolved source passes the version contract
+    assert (home / ".local/bin/tool").read_text() == tool  # command still named after the resolved stem
+
+
+def test_5_4_7_usr_local_sbin_installs_admin_commands_always_as_root(recipe, usr_local_sbin_dir, bundled_files, totchef, cli):
+    """`[usr_local_sbin.<name>]` installs to /usr/local/sbin — admin and daemon helpers, outside ordinary users' PATH — always as root, under the same version contract."""
+    helper = '#!/bin/bash\n__version__="1.0.0"\ncase "$1" in --version) echo "$__version__";; --help) echo "usage: helper";; esac\n'
+    (bundled_files / "helper.sh").write_text(helper)
+    recipe.declares("usr_local_sbin", "helper")
+
+    totchef.up().assert_shows("usr_local_sbin.helper", "applied")
+
+    installed = usr_local_sbin_dir / "helper"
+    assert installed.read_text() == helper
+    assert (installed.stat().st_mode & 0o777) == 0o755
+    cli.run("--list-cooks").assert_lists("usr_local_sbin", scope="root")

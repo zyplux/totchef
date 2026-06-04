@@ -106,14 +106,14 @@ def preview_plan(config: dict) -> None:
 
 
 def apply(recipe_path: Path, dry_run: bool) -> None:
-    """Load, validate, and run the recipe; an apply escalates to root and previews the plan first, then reports and signals failures through the exit code."""
+    """Load and validate the recipe, then run it; an apply escalates to root and previews the plan first, then reports and signals failures through the exit code. Validation gates every run and comes before escalation and log redirection, so an invalid recipe is rejected loudly on the real stderr without ever prompting for a password."""
+    config = load_recipe(recipe_path)
+    validate(config)
+
     if not dry_run and not inline_mode():
         ensure_root(recipe_path)
     start_logging(echo_to_terminal=not dry_run)
     start = time.monotonic()
-
-    config = load_recipe(recipe_path)
-    validate(config)
 
     if not dry_run:
         preview_plan(config)

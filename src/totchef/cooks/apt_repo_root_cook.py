@@ -1,24 +1,47 @@
-"""StateCook for [apt_repo.<name>] — third-party apt repos, each configured with a keyring under /usr/share/keyrings and a `Signed-By:` `.sources` file. Runs as root; depends on bash.apt_prereqs."""
+"""StateCook for [apt_repo.<name>] — third-party apt repos, each configured with a keyring under /usr/share/keyrings and a `Signed-By:` `.sources` file, both named after the entry. `url` is the repo's base (scheme optional, https assumed): `key_url`/`uris` may be paths relative to it, `uris` defaulting to the base itself; absolute URLs work as before. Runs as root; depends on bash.apt_prereqs."""
 
 import platform
 import sys
 from pathlib import Path
 
 from loguru import logger
+from pydantic import model_validator
 
 from totchef import shell
-from totchef.cook_base import StateChangeOutcome, StateCook, EntrySpec
-from totchef.harness import fetch_url, write_if_changed
+from totchef.cook_base import EntrySpec, StateChangeOutcome, StateCook
+from totchef.harness import assume_https, fetch_url, write_if_changed
+
+KEYRINGS_DIR = Path("/usr/share/keyrings")
+SOURCES_DIR = Path("/etc/apt/sources.list.d")
+
+
+def resolve_repo_url(base_url: str | None, url: str | None) -> str:
+    """Absolute URLs (any scheme) pass through; a relative path — or an omitted `uris` — resolves against the repo's `url`."""
+    if url and "://" in url:
+        return url
+    if base_url is None:
+        unresolved = f"relative '{url}'" if url else "an omitted `uris`"
+        raise ValueError(f"{unresolved} needs a base to resolve against — set `url` or absolute URLs")
+    return f"{base_url}/{url}" if url else base_url
 
 
 class AptRepoEntry(EntrySpec):
+    url: str | None = None
     key_url: str
-    uris: str
+    uris: str | None = None
     suites: str = "stable"
     components: str = "main"
     architectures: str | None = None
     keyring: str | None = None
     source_path: str | None = None
+
+    @model_validator(mode="after")
+    def _resolve_urls(self) -> "AptRepoEntry":
+        if self.url is not None:
+            self.url = assume_https(self.url)
+        self.key_url = resolve_repo_url(self.url, self.key_url)
+        self.uris = resolve_repo_url(self.url, self.uris)
+        return self
 
 
 def detect_release() -> str:
@@ -30,11 +53,11 @@ def detect_release() -> str:
 
 
 def build_keyring_path(name: str, repo: AptRepoEntry) -> Path:
-    return Path(repo.keyring or f"/usr/share/keyrings/{name}.gpg")
+    return Path(repo.keyring) if repo.keyring else KEYRINGS_DIR / f"{name}.gpg"
 
 
 def build_source_path(name: str, repo: AptRepoEntry) -> Path:
-    return Path(repo.source_path or f"/etc/apt/sources.list.d/{name}.sources")
+    return Path(repo.source_path) if repo.source_path else SOURCES_DIR / f"{name}.sources"
 
 
 def install_repo_key(name: str, key_url: str, keyring: Path) -> bool:

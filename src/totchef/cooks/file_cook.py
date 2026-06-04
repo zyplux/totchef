@@ -1,11 +1,11 @@
-"""StateCook for [file.<name>] — install a file with exact content (inline or bundled under totchef/files/), diffed by content hash so a `post_hook` fires only on change. `path` expands `~` for per-user installs. Privilege-agnostic; recipe.toml grants root per entry."""
+"""StateCook for [file.<name>] — install a file with exact content (inline `content`, a bundled `source` under totchef/files/, or with neither set the bundled file named after the entry), diffed by content hash so a `post_hook` fires only on change. `path` expands `~` for per-user installs. Privilege-agnostic; recipe.toml grants root per entry."""
 
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import ValidationInfo, model_validator
 
 from totchef import harness
-from totchef.cook_base import FileStateCook, StateChangeOutcome, EntrySpec
+from totchef.cook_base import FileStateCook, StateChangeOutcome, EntrySpec, get_entry_name
 
 
 class FileEntry(EntrySpec):
@@ -15,9 +15,11 @@ class FileEntry(EntrySpec):
     mode: str = "0644"
 
     @model_validator(mode="after")
-    def _exactly_one_body(self) -> "FileEntry":
-        if (self.source is None) == (self.content is None):
-            raise ValueError("set exactly one of `source` or `content`")
+    def _resolve_body(self, info: ValidationInfo) -> "FileEntry":
+        if self.source is not None and self.content is not None:
+            raise ValueError("set `source` or `content`, not both")
+        if self.source is None and self.content is None:
+            self.source = harness.resolve_bundled_source(get_entry_name(info))
         return self
 
 

@@ -1,12 +1,29 @@
 """Fixtures for the prose-style tests, by role (arrange/act/assert); only system boundaries (bash, network, `$HOME`, host) are mocked."""
 
 from act_fixtures import chef, cli, totchef
-from arrange_fixtures import bundled_files, fresh_registry, fresh_runner_colors, home, http, recipe, register_plugin, scenario, sys_bin_dir, system, terminal
+from arrange_fixtures import (
+    apt_keyrings_dir,
+    apt_sources_dir,
+    bundled_files,
+    fresh_registry,
+    fresh_runner_colors,
+    home,
+    http,
+    recipe,
+    register_plugin,
+    scenario,
+    system,
+    terminal,
+    usr_local_bin_dir,
+    usr_local_sbin_dir,
+)
 from assert_fixtures import read_json
 from container_fixtures import apply_in_container, container_image
 
 __all__ = [
     "apply_in_container",
+    "apt_keyrings_dir",
+    "apt_sources_dir",
     "bundled_files",
     "chef",
     "cli",
@@ -19,8 +36,9 @@ __all__ = [
     "recipe",
     "register_plugin",
     "scenario",
-    "sys_bin_dir",
     "system",
     "terminal",
     "totchef",
+    "usr_local_bin_dir",
+    "usr_local_sbin_dir",
 ]

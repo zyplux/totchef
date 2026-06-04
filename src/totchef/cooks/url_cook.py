@@ -1,4 +1,4 @@
-"""Cook for [url.<name>] — vendor `curl | bash` bootstrappers as a presence-only VersionedCook (install-if-missing / upgrade-if-present); install errors hard, update errors soft. Runs as the invoking user."""
+"""Cook for [url.<name>] — vendor `curl | bash` bootstrappers as a presence-only VersionedCook (install-if-missing / upgrade-if-present); a `url` without a scheme means https. Install errors hard, update errors soft. Runs as the invoking user."""
 
 import re
 import shlex
@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Literal
 
 from loguru import logger
+from pydantic import model_validator
 
 from totchef import shell
 from totchef.cook_base import EntrySpec, SyncOutcome, VersionedCook
-from totchef.harness import fetch_url, find_binary
+from totchef.harness import assume_https, fetch_url, find_binary
 
 RERUN_INSTALLER = "rerun-installer"
 
@@ -39,6 +40,11 @@ class UrlEntry(EntrySpec):
     args: list[str] = []
     update_action: list[str] | Literal["rerun-installer"] | None = None
     update_guard: str | None = None
+
+    @model_validator(mode="after")
+    def _assume_https(self) -> "UrlEntry":
+        self.url = assume_https(self.url)
+        return self
 
 
 def run_installer(url: str, args: list[str], note: str) -> None:

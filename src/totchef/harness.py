@@ -14,6 +14,18 @@ from loguru import logger
 PACKAGE_DIR = Path(__file__).resolve().parent
 FILES_DIR = PACKAGE_DIR / "files"
 
+
+def resolve_bundled_source(entry_name: str | None) -> str:
+    """The bundled file an omitted `source` defaults to: the unique file under totchef/files/ whose stem equals the entry name; zero or several matches raise, asking for an explicit `source`."""
+    candidates = sorted(path.name for path in FILES_DIR.iterdir() if path.is_file() and path.stem == entry_name)
+    if len(candidates) == 1:
+        return candidates[0]
+    problem = (
+        f"several bundled files match '{entry_name}': {', '.join(candidates)}" if candidates else f"no bundled file named '{entry_name}.*' under totchef/files/"
+    )
+    raise ValueError(f"{problem} — set `source` explicitly")
+
+
 # sysexits.h EX_TEMPFAIL: cook -> chef signal for recoverable failure.
 SOFT_FAIL_EXIT = 75
 
@@ -76,6 +88,11 @@ def find_binary(name: str) -> Path | None:
 
 
 USER_AGENT = "totchef"
+
+
+def assume_https(url: str) -> str:
+    """A URL with the scheme omitted means https; an explicit scheme passes through."""
+    return url if "://" in url else f"https://{url}"
 
 
 def fetch_url(url: str) -> bytes:

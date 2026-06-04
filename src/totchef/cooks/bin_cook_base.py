@@ -1,13 +1,13 @@
-"""Shared base for [sys_bin]/[user_bin] — install a bundled command (any language, even a compiled binary) as a 0755 executable named after its source stem; an embedded `__version__` marker is the diff key, and the version/help contract is read off the file's bytes (the command is never executed)."""
+"""Shared base for the PATH-install cooks ([usr_local_bin]/[usr_local_sbin]/[local_bin]) — install a bundled command (any language, even a compiled binary) as a 0755 executable named after its source stem; an omitted `source` defaults to the bundled file named after the entry. An embedded `__version__` marker is the diff key, and the version/help contract is read off the file's bytes (the command is never executed)."""
 
 import re
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import model_validator
+from pydantic import ValidationInfo, model_validator
 
 from totchef import harness
-from totchef.cook_base import EntrySpec, StateChangeOutcome, StateCook
+from totchef.cook_base import EntrySpec, StateChangeOutcome, StateCook, get_entry_name
 
 EXECUTABLE_MODE = 0o755
 VERSION_MARKER_PATTERN = re.compile(r'__version__\s*=\s*"([^"]+)"')
@@ -35,10 +35,12 @@ def find_contract_problems(command_path: Path) -> list[str]:
 
 
 class BinEntry(EntrySpec):
-    source: str
+    source: str | None = None
 
     @model_validator(mode="after")
-    def _command_honors_contract(self) -> "BinEntry":
+    def _command_honors_contract(self, info: ValidationInfo) -> "BinEntry":
+        if self.source is None:
+            self.source = harness.resolve_bundled_source(get_entry_name(info))
         if problems := find_contract_problems(harness.FILES_DIR / self.source):
             raise ValueError("; ".join(problems))
         return self

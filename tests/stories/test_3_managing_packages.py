@@ -218,3 +218,15 @@ def test_3_3_6_version_best_effort_parsed_falls_back_to_present(recipe, terminal
     assert "present" in next(line for line in plan.report.splitlines() if "url.bun" in line)  # version parsed best-effort
 
     totchef.up().assert_shows("url.bun", "unchanged")  # and an actual run sees it's already present
+
+
+def test_3_3_7_url_scheme_defaults_to_https(recipe, terminal, http, totchef, system):
+    """`url = "bun.sh/install"` fetches https://bun.sh/install; an explicit scheme passes through."""
+    recipe.declares("url", "bun", url="bun.sh/install")
+    http.arrange("https://bun.sh/install", "#!/bin/bash")
+    terminal.arrange("bash -s --", effect=lambda: system.has("bun"))
+    terminal.arrange("bun --version", "1.1.0")
+
+    totchef.up().assert_shows("url.bun", "installed")
+
+    http.expect_fetched("https://bun.sh/install")

@@ -28,12 +28,12 @@ The two roles referenced throughout:
 > compliance with my recipe, so that one command bootstraps a fresh install or
 > reconciles drift on an existing one.
 
-#### 1.1.1 up resolves escalates validates previews then executes
+#### 1.1.1 up resolves validates escalates previews then executes
 
-`totchef up` resolves the recipe, escalates to root, then loads and validates
-it, previews the plan, and executes — creating or updating every resource that
-differs from the desired state. Escalation comes first, so even an invalid recipe
-triggers the `sudo` prompt *before* the validation error surfaces.
+`totchef up` resolves the recipe, loads and validates it, escalates to root,
+previews the plan, and executes — creating or updating every resource that
+differs from the desired state. Validation comes first, so an invalid recipe
+is rejected with the schema error *before* the `sudo` prompt ever appears.
 
 #### 1.1.2 up is idempotent rerun reports nothing changed
 
@@ -48,6 +48,12 @@ only what genuinely differs. The one exception is the `url` vendor cook, which d
 The exit code communicates the outcome to scripts and CI: `0` = success,
 `75` = soft failure (something recoverable failed but the system is usable),
 `1` = hard failure (a critical step failed and the apply was aborted).
+
+#### 1.1.4 invalid recipe rejects the run before any apply
+
+Every run validates the recipe first — the same checks as `totchef lint` — and
+one invalid entry rejects the whole run before any cook applies: even the
+valid entries' targets stay untouched.
 
 ### 1.2 [Preview changes without touching the system](test_1_running_totchef.py)
 
@@ -312,6 +318,11 @@ installed).
 Version is best-effort parsed from `--version`; if it can't be parsed the cook
 still works, reporting the tool as simply `present`.
 
+#### 3.3.7 url scheme defaults to https
+
+A `url` without a scheme means https — `url = "bun.sh/install"` fetches
+`https://bun.sh/install`. An explicit scheme passes through unchanged.
+
 ---
 
 ## 4. Language package-manager wrappers
@@ -420,7 +431,7 @@ at that keyring.
 
 #### 5.1.2 operator declares key url uris and optional fields
 
-The operator declares `key_url` and `uris`, with optional `suites`,
+The operator declares `key_url`, with optional `url`, `uris`, `suites`,
 `components`, `architectures`, and custom `keyring`/`source_path`.
 
 #### 5.1.3 suites release placeholder substituted with codename
@@ -433,6 +444,22 @@ Ubuntu release codename — so the same recipe works across releases.
 The repo is considered configured only when **both** the keyring and the
 `.sources` file exist; otherwise it's re-applied.
 
+#### 5.1.5 relative urls resolve against the repo url
+
+`url` is the repo's base, with the scheme optional (https assumed):
+`key_url`/`uris` without a scheme resolve against it, and an omitted `uris`
+defaults to the base itself. Absolute URLs keep working unchanged, and a
+relative URL without `url` is rejected at lint. The keyring/`.sources` files
+keep the entry's name, so the entry stays a short alias (`signal-desktop`)
+while `url` carries the host.
+
+```toml
+[apt_repo.signal-desktop]
+url = "updates.signal.org/desktop/apt"
+key_url = "keys.asc"
+suites = "xenial"
+```
+
 ### 5.2 [Install files with exact content](test_5_configuring_system_state.py)
 
 > As an operator, I want to install a file with exact bytes — either inline content
@@ -444,7 +471,7 @@ The repo is considered configured only when **both** the keyring and the
 
 `[file.<name>]` writes a file to `path` from either inline `content` or a
 `source` asset bundled with totchef (under `totchef/files/`), with a given `mode`.
-Exactly one of `content`/`source` must be set.
+Setting both is rejected.
 
 #### 5.2.2 file diffed by content hash
 
@@ -466,6 +493,13 @@ A `~` in `path` resolves against `$HOME`, so per-user entries (e.g.
 
 Privilege-agnostic: set `needs_root = true` per entry for files under `/etc`,
 `/usr`, etc.
+
+#### 5.2.6 source defaults to the bundled file named after the entry
+
+With neither `content` nor `source` set, the entry installs the unique bundled
+file whose stem matches the entry name (`[file.egpu-prime]` →
+`egpu-prime.service`). Zero or several matches fail lint, asking for an
+explicit `source`.
 
 ### 5.3 [Run arbitrary idempotent shell steps](test_5_configuring_system_state.py)
 
@@ -499,11 +533,11 @@ Privilege-agnostic: grant root per entry.
 > per-user — and updated only when their version changes, so that PATH tools roll
 > forward deliberately instead of on every byte-twiddle.
 
-#### 5.4.1 sys bin and user bin install command named after source stem
+#### 5.4.1 usr local bin and local bin install command named after source stem
 
-`[sys_bin.<name>]` installs a bundled asset to `/usr/local/bin` (always as
-root); `[user_bin.<name>]` to `~/.local/bin`. Only `source` is declared: the
-command takes the source's stem as its name and mode `0755`.
+`[usr_local_bin.<name>]` installs a bundled asset to `/usr/local/bin` (always
+as root); `[local_bin.<name>]` to `~/.local/bin`. Only `source` is declared:
+the command takes the source's stem as its name and mode `0755`.
 
 #### 5.4.2 version decides the update not content
 
@@ -515,7 +549,7 @@ versions.
 #### 5.4.3 lint statically rejects scripts missing version or help
 
 A command that doesn't embed `__version__ = "<version>"` or offer
-`--version`/`--help` can't enter `sys_bin`/`user_bin`: lint rejects the entry.
+`--version`/`--help` can't enter a bin cook: lint rejects the entry.
 The check is static — read off the file's bytes, never executing it.
 
 #### 5.4.4 command may be any language even a binary
@@ -524,10 +558,22 @@ The contract markers are byte-level, so a bash script (`__version__="1.0"`), a
 compiled binary with the marker baked in as a constant string, or anything else
 qualifies — not just Python.
 
-#### 5.4.5 sys bin is always root user bin is user scoped
+#### 5.4.5 usr local bin is always root local bin is user scoped
 
-`sys_bin` is an always-root cook (its domain is `/usr/local/bin`); `user_bin`
-stays user-scoped.
+`usr_local_bin` is an always-root cook (its domain is `/usr/local/bin`);
+`local_bin` stays user-scoped.
+
+#### 5.4.6 source defaults to the bundled command named after the entry
+
+With no `source`, the entry installs the unique bundled command whose stem
+matches the entry name — `[local_bin.ctop]` needs no keys at all. Zero or
+several matches fail lint, asking for an explicit `source`.
+
+#### 5.4.7 usr local sbin installs admin commands always as root
+
+`[usr_local_sbin.<name>]` installs to `/usr/local/sbin` — the home of admin
+and daemon helpers (e.g. a boot service's switch script), outside ordinary
+users' PATH — always as root, under the same version contract.
 
 ---
 

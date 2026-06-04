@@ -15,7 +15,9 @@ import pytest
 from assert_fixtures import HttpAssertions, TerminalAssertions
 from totchef import harness, shell
 from totchef import terminal as terminal_module
-from totchef.cooks.sys_bin_root_cook import SysBinCook
+from totchef.cooks import apt_repo_root_cook
+from totchef.cooks.usr_local_bin_root_cook import UsrLocalBinCook
+from totchef.cooks.usr_local_sbin_root_cook import UsrLocalSbinCook
 from totchef.registry import cook_registry
 
 
@@ -294,11 +296,35 @@ def fresh_runner_colors() -> Generator[None]:
 
 
 @pytest.fixture
-def sys_bin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point [sys_bin]'s /usr/local/bin at a temp dir, isolating system-wide command installs from the real host."""
+def usr_local_bin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point [usr_local_bin]'s /usr/local/bin at a temp dir, isolating system-wide command installs from the real host."""
     bin_dir = tmp_path / "usr-local-bin"
-    monkeypatch.setattr(SysBinCook, "bin_dir", str(bin_dir))
+    monkeypatch.setattr(UsrLocalBinCook, "bin_dir", str(bin_dir))
     return bin_dir
+
+
+@pytest.fixture
+def usr_local_sbin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point [usr_local_sbin]'s /usr/local/sbin at a temp dir, isolating admin-command installs from the real host."""
+    bin_dir = tmp_path / "usr-local-sbin"
+    monkeypatch.setattr(UsrLocalSbinCook, "bin_dir", str(bin_dir))
+    return bin_dir
+
+
+@pytest.fixture
+def apt_keyrings_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point [apt_repo]'s /usr/share/keyrings at a temp dir, isolating keyring installs from the real host."""
+    keyrings_dir = tmp_path / "keyrings"
+    monkeypatch.setattr(apt_repo_root_cook, "KEYRINGS_DIR", keyrings_dir)
+    return keyrings_dir
+
+
+@pytest.fixture
+def apt_sources_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point [apt_repo]'s /etc/apt/sources.list.d at a temp dir, isolating .sources writes from the real host."""
+    sources_dir = tmp_path / "sources.list.d"
+    monkeypatch.setattr(apt_repo_root_cook, "SOURCES_DIR", sources_dir)
+    return sources_dir
 
 
 @pytest.fixture

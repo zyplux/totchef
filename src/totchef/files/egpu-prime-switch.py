@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Boot-time eGPU-primary selector (egpu-prime.service, as root): when an NVIDIA eGPU is on the bus, flip boot_vga + write KWIN_DRM_DEVICES/WLR_DRM_DEVICES/AQ_DRM_DEVICES/VULKAN_ADAPTER + `prime-select nvidia`, else revert. STANDALONE: system python3 + stdlib only — a non-stdlib import breaks the graphical session at boot. Resolves /dev/dri/by-path to cardN every boot (a baked-in card number caused an earlier login loop)."""
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -9,6 +10,8 @@ import syslog
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+
+__version__ = "1.0.0"
 
 SYSLOG_IDENT = "egpu-prime"
 NVIDIA_PCI_VENDOR_ID = "0x10de"
@@ -158,7 +161,17 @@ def select_prime(prime_name: str, current: str) -> int:
     return 1
 
 
+def parse_cli() -> None:
+    parser = argparse.ArgumentParser(
+        prog="egpu-prime-switch",
+        description="Boot-time eGPU-primary selector: pick the NVIDIA eGPU as primary when present, else revert (run by egpu-prime.service as root).",
+    )
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.parse_args()
+
+
 def main() -> int:
+    parse_cli()
     syslog.openlog(SYSLOG_IDENT, syslog.LOG_PID)
     nvidia_present = poll_until(is_nvidia_on_pci, retries=10)
     prime_name = "on-demand"

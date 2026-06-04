@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationInfo
 
 Status = Literal["ok", "soft_fail", "hard_fail"]
 
@@ -17,6 +17,11 @@ class EntrySpec(BaseModel):
 
     pre_hook: str | None = None
     post_hook: str | None = None
+
+
+def get_entry_name(info: ValidationInfo) -> str | None:
+    """The recipe entry's name, handed to validation as context by StateCook and schema lint so an entry validator can default fields off it (e.g. an omitted `source`)."""
+    return (info.context or {}).get("entry_name")
 
 
 def chain_hooks(*commands: str | None) -> str | None:
@@ -136,7 +141,9 @@ class StateCook[EntryModel: EntrySpec](CookBase):
         super().__init__(section)
         model = self.entry_model
         assert model is not None, f"{type(self).__name__} must set entry_model"
-        self.entries: dict[str, EntryModel] = {name: cast("EntryModel", model.model_validate(raw)) for name, raw in section.items()}
+        self.entries: dict[str, EntryModel] = {
+            name: cast("EntryModel", model.model_validate(raw, context={"entry_name": name})) for name, raw in section.items()
+        }
 
     def list_resources(self) -> list[str]:
         return list(self.entries)
