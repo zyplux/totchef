@@ -4,8 +4,8 @@ from pathlib import Path
 
 from pydantic import model_validator
 
+from totchef import harness
 from totchef.cook_base import FileStateCook, StateChangeOutcome, EntrySpec
-from totchef.harness import FILES_DIR, write_if_changed
 
 
 class FileEntry(EntrySpec):
@@ -30,14 +30,14 @@ class FileCook(FileStateCook[FileEntry]):
     def _render(self, name: str) -> bytes:
         entry = self.entries[name]
         if entry.source is not None:
-            return (FILES_DIR / entry.source).read_bytes()
+            return (harness.FILES_DIR / entry.source).read_bytes()
         return (entry.content or "").encode()
 
     def _parse_mode(self, name: str) -> int:
         return int(self.entries[name].mode, 8)
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
-        changed = write_if_changed(
+        changed = harness.write_if_changed(
             self._target_path(name),
             self._render(name),
             self._parse_mode(name),

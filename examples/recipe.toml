@@ -46,16 +46,11 @@ packages = [
 ]
 post_hook = 'mkdir -p "$HOME/.local/bin" && ln -sf "${BUN_INSTALL:-$HOME/.bun}/bin/pi" "$HOME/.local/bin/pi"'
 
-[file.write_if_changed]
-needs_root = true
+[sys_bin.write_if_changed]
 source = "write-if-changed.py"
-path = "/usr/local/bin/write-if-changed"
-mode = "0755"
 
-[file.vsx_profile]
-source = "vsx-profile.py"
-path = "~/.local/bin/vsx-profile"
-mode = "0755"
+[user_bin.ctop]
+source = "ctop.py"
 
 [file.trusted_gpgd_hardening]
 needs_root = true
@@ -127,7 +122,7 @@ Pin-Priority: 900
 EOF
 '''
 current_state = "test -f /etc/apt/preferences.d/ubuntu-archives.pref && echo present || echo absent"
-depends_on = ["file.write_if_changed"]
+depends_on = ["sys_bin.write_if_changed"]
 
 [bash.code_insiders_debconf]
 needs_root = true

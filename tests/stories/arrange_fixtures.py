@@ -15,6 +15,7 @@ import pytest
 from assert_fixtures import HttpAssertions, TerminalAssertions
 from totchef import harness, shell
 from totchef import terminal as terminal_module
+from totchef.cooks.sys_bin_root_cook import SysBinCook
 from totchef.registry import cook_registry
 
 
@@ -290,6 +291,23 @@ def fresh_runner_colors() -> Generator[None]:
     terminal_module._runner_colors.clear()
     yield
     terminal_module._runner_colors.clear()
+
+
+@pytest.fixture
+def sys_bin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point [sys_bin]'s /usr/local/bin at a temp dir, isolating system-wide command installs from the real host."""
+    bin_dir = tmp_path / "usr-local-bin"
+    monkeypatch.setattr(SysBinCook, "bin_dir", str(bin_dir))
+    return bin_dir
+
+
+@pytest.fixture
+def bundled_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point totchef's bundled-asset dir (totchef/files/) at a temp dir the test populates — for stories about asset contracts rather than the shipped assets themselves."""
+    files_dir = tmp_path / "bundled-files"
+    files_dir.mkdir()
+    monkeypatch.setattr(harness, "FILES_DIR", files_dir)
+    return files_dir
 
 
 @pytest.fixture

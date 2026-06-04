@@ -493,6 +493,42 @@ no-ops.
 
 Privilege-agnostic: grant root per entry.
 
+### 5.4 [Install versioned commands onto the PATH](test_5_configuring_system_state.py)
+
+> As an operator, I want bundled tools installed as commands — system-wide or
+> per-user — and updated only when their version changes, so that PATH tools roll
+> forward deliberately instead of on every byte-twiddle.
+
+#### 5.4.1 sys bin and user bin install command named after source stem
+
+`[sys_bin.<name>]` installs a bundled asset to `/usr/local/bin` (always as
+root); `[user_bin.<name>]` to `~/.local/bin`. Only `source` is declared: the
+command takes the source's stem as its name and mode `0755`.
+
+#### 5.4.2 version decides the update not content
+
+The diff key is the command's embedded version: an older (or unversioned, or
+absent) install is rewritten; equal versions leave the file alone even when its
+bytes differ. The report's `before`/`current`/`latest` columns carry the
+versions.
+
+#### 5.4.3 lint statically rejects scripts missing version or help
+
+A command that doesn't embed `__version__ = "<version>"` or offer
+`--version`/`--help` can't enter `sys_bin`/`user_bin`: lint rejects the entry.
+The check is static — read off the file's bytes, never executing it.
+
+#### 5.4.4 command may be any language even a binary
+
+The contract markers are byte-level, so a bash script (`__version__="1.0"`), a
+compiled binary with the marker baked in as a constant string, or anything else
+qualifies — not just Python.
+
+#### 5.4.5 sys bin is always root user bin is user scoped
+
+`sys_bin` is an always-root cook (its domain is `/usr/local/bin`); `user_bin`
+stays user-scoped.
+
 ---
 
 ## 6. Tuning desktop applications (per-user domains)
