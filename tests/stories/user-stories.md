@@ -710,10 +710,12 @@ unchanged); on a non-terminal it's plain TOON text.
 A real `up` shows only changed/failed rows plus a footer counting unchanged
 resources and total elapsed time; a `plan` shows every row.
 
-#### 8.1.3 content hash diffs humanized present or stale
+#### 8.1.3 content hash diffs humanized matches or differs
 
-Content-hash diffs are humanized — a matching hash reads `present`, a drifting
-one reads `stale`.
+Content-hash diffs are humanized — a hash equal to the rendered recipe content
+reads `matches`, a drifting one reads `differs`, a missing file reads `absent`,
+and the `latest` cell shows the target's short content id (`#1a2b3c4d`), so a
+row distinguishes "exists with the wrong content" from "doesn't exist yet".
 
 #### 8.1.4 before and current diverge on upgrade
 

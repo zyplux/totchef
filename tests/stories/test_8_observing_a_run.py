@@ -53,19 +53,26 @@ def test_8_1_2_up_shows_changed_rows_plus_footer_plan_shows_all(recipe, totchef,
     assert "1 unchanged" in report.report  # the footer summarizes what was left alone
 
 
-def test_8_1_3_content_hash_diffs_humanized_present_or_stale(recipe, totchef, tmp_path):
-    """A matching hash reads `present`, a drifting one reads `stale`."""
+def test_8_1_3_content_hash_diffs_humanized_matches_or_differs(recipe, totchef, tmp_path):
+    """A hash equal to the rendered recipe content reads `matches`, a drifting one `differs`, a missing file `absent`; `latest` carries the short content id."""
     drift = tmp_path / "drift"
     drift.write_text("OLD\n")  # exists but will be rewritten
     settled = tmp_path / "settled"
     settled.write_text("SAME\n")  # already matches
     recipe.declares("file", "drift", path=str(drift), content="NEW\n")
     recipe.declares("file", "settled", path=str(settled), content="SAME\n")
+    recipe.declares("file", "fresh", path=str(tmp_path / "fresh"), content="NEW\n")
 
     plan = totchef.plan()
 
-    assert "file.drift,stale,stale,present,would apply" in plan.report
-    assert "file.settled,present,present,present,ok" in plan.report
+    assert "file.drift,differs,differs,#21998928,would apply" in plan.report  # #sha256("NEW\n")[:8]
+    assert "file.settled,matches,matches,#e4426b0f,ok" in plan.report  # #sha256("SAME\n")[:8]
+    assert "file.fresh,absent,absent,#21998928,would apply" in plan.report
+
+    report = totchef.up()
+
+    assert "file.drift,differs,matches,#21998928,applied" in report.full_table
+    assert "file.fresh,absent,matches,#21998928,applied" in report.full_table
 
 
 def test_8_1_4_before_and_current_diverge_on_upgrade(recipe, terminal, http, totchef, system):

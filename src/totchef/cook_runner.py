@@ -40,8 +40,8 @@ CONTENT_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def format_state(token: str) -> str:
-    """Render a diff token for the report: a sha256 digest as 'present', else as-is."""
-    return "present" if CONTENT_DIGEST.fullmatch(token) else token
+    """Render a diff token for the report: a sha256 digest as its short content id (#1a2b3c4d), else as-is."""
+    return f"#{token[:8]}" if CONTENT_DIGEST.fullmatch(token) else token
 
 
 def format_duration(seconds: float) -> str:
@@ -163,7 +163,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
     return CookResult(section, status, rows, result.message)
 
 
-def apply_state_resource(cook: StateCook, name: str, current_label: str, desired_label: str) -> tuple[ReportRow, Status]:
+def apply_state_resource(cook: StateCook, name: str, current_label: str, desired_label: str, applied_label: str) -> tuple[ReportRow, Status]:
     """Apply one state-cook resource and build its row: pre_hook gates, apply mutates, post_hook fires on a real change; a pre_hook-gated skip reports as `ok`."""
     pre_hook, post_hook = cook.get_hooks(name)
     if pre_hook and not run_pre_hook(pre_hook):
@@ -179,9 +179,9 @@ def apply_state_resource(cook: StateCook, name: str, current_label: str, desired
     if status == "hard_fail":
         action, post_label = "failed", current_label  # didn't move
     elif status == "soft_fail":
-        action, post_label = "post-failed", desired_label  # apply landed; the hook failed
+        action, post_label = "post-failed", applied_label  # apply landed; the hook failed
     elif outcome.changed:
-        action, post_label = "applied", desired_label
+        action, post_label = "applied", applied_label
     else:
         action, post_label = "unchanged", current_label
     return ReportRow(name, current_label, post_label, desired_label, action, outcome.changed, status), status
@@ -193,15 +193,19 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
     desired = cook.get_desired_state()
     to_apply = [n for n in resources if current.get(n) != desired.get(n)]
 
-    def labels(name: str) -> tuple[str, str]:
-        """Pre-state and desired labels: a drifting digest reads 'stale'; otherwise the raw token (or 'present' for a matching digest)."""
-        current_token = current.get(name, "?")
-        current_label = "stale" if name in to_apply and CONTENT_DIGEST.fullmatch(current_token) else format_state(current_token)
-        return current_label, format_state(desired.get(name, "?"))
+    def labels(name: str) -> tuple[str, str, str]:
+        """Pre-state, target and post-apply labels: a digest reads 'matches'/'differs' against the rendered recipe content, the target column shows its short content id, raw tokens pass through."""
+        current_token, desired_token = current.get(name, "?"), desired.get(name, "?")
+        if CONTENT_DIGEST.fullmatch(current_token):
+            current_label = "matches" if current_token == desired_token else "differs"
+        else:
+            current_label = current_token
+        applied_label = "matches" if CONTENT_DIGEST.fullmatch(desired_token) else desired_token
+        return current_label, format_state(desired_token), applied_label
 
     def row_for(name: str) -> tuple[ReportRow, Status]:
         """The (row, status) one resource contributes: a dry-run preview, an unchanged-on-up row, or a real apply."""
-        current_label, desired_label = labels(name)
+        current_label, desired_label, applied_label = labels(name)
         will = name in to_apply
 
         if dry_run:
@@ -209,7 +213,7 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
             return ReportRow(name, current_label, current_label, desired_label, action, will), "ok"
 
         if will:
-            return apply_state_resource(cook, name, current_label, desired_label)
+            return apply_state_resource(cook, name, current_label, desired_label, applied_label)
 
         return ReportRow(name, current_label, current_label, desired_label, "unchanged", False), "ok"
 
