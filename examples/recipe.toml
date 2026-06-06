@@ -94,6 +94,43 @@ options nvidia NVreg_EnableS0ixPowerManagement=0
 """
 post_hook = "systemctl enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service 2>/dev/null || true; update-initramfs -u"
 
+# Chromium 149+ submits AV1/VP9 decode buffers in a layout the stock
+# nvidia-vaapi-driver (<= 0.0.17) mis-parses: vaEndPicture fails per frame and the
+# browser silently falls back to software decode. Build the community fix (PR #430,
+# pinned commit) in a throwaway container and dpkg-divert it over the deb's file.
+# Drop this section once upstream ships the fix (then:
+# dpkg-divert --rename --remove /usr/lib/x86_64-linux-gnu/dri/nvidia_drv_video.so).
+# See docs/issues/laptop-rendering-sluggishness/investigation.md.
+[bash.nvidia_vaapi_chromium_fix]
+needs_root = true
+depends_on = ["apt_pkg"]
+apply = '''
+set -euo pipefail
+commit=288a7ba79d47219ea6dea737ec8d684b53a8de36
+so=/usr/lib/x86_64-linux-gnu/dri/nvidia_drv_video.so
+build_dir=$(mktemp -d)
+trap 'rm -rf "$build_dir"' EXIT
+podman run --rm -e commit="$commit" -v "$build_dir":/out docker.io/library/ubuntu:26.04 bash -c '
+set -e
+sed -i "s/^Types: deb$/Types: deb deb-src/" /etc/apt/sources.list.d/ubuntu.sources
+apt-get update -q
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q git ca-certificates
+DEBIAN_FRONTEND=noninteractive apt-get build-dep -y -q nvidia-vaapi-driver
+git clone https://github.com/elFarto/nvidia-vaapi-driver.git /src
+cd /src
+git fetch origin pull/430/head
+git checkout "$commit"
+meson setup build
+ninja -C build
+cp build/nvidia_drv_video.so /out/
+'
+dpkg-divert --list "$so" | grep -q . || dpkg-divert --local --rename --add "$so"
+install -m 0644 "$build_dir/nvidia_drv_video.so" "$so"
+mkdir -p /usr/local/share/totchef
+echo "$commit" > /usr/local/share/totchef/nvidia-vaapi-chromium-fix.commit
+'''
+current_state = "test -f /usr/lib/x86_64-linux-gnu/dri/nvidia_drv_video.so.distrib && grep -qxF 288a7ba79d47219ea6dea737ec8d684b53a8de36 /usr/local/share/totchef/nvidia-vaapi-chromium-fix.commit 2>/dev/null && echo present || echo absent"
+
 [bash.ubuntu_pin]
 needs_root = true
 apply = '''

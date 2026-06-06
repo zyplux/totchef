@@ -55,6 +55,30 @@ monitors**; snappy on the internal 1080p panel.
   Confirmed: Brave `about://gpu` shows Video Decode + Encode "Hardware accelerated", 4K
   video plays with silent CPU.
 
+## Reopened — Brave 149 broke AV1 hardware decode (2026-06-07)
+
+- 4K AV1 in Brave: renderer ~400% CPU, NVDEC 0% — silent software fallback. Original
+  fix intact (clients on `renderD129`, KWin on NVIDIA, env file correct).
+- GPU-process journal per frame: `vaEndPicture failed … internal decoding error`.
+  `about://gpu` still shows all profiles — capability probe succeeds, only real frame
+  submission fails, so the report looks identical to the known-good one.
+- System path proven good: ffmpeg VA-API decode (incl. 4K AV1) on `renderD129` hits
+  NVDEC 48–77%. Kernel, NVIDIA driver, shim all unchanged from the working state.
+- Trigger: Brave 1.90.128 → 1.91.168 (Chromium 148 → 149) on 2026-06-06; broken same
+  day. Worked May 30 – Jun 5 on kernel 7.0.0-22 → kernel and the Jun 3 hyprland/labwc
+  install exonerated.
+- Cause: Chromium 149's slice-buffer submission vs the shim's NVDEC backend (upstream
+  #397/#405/#419). Fixes only in unmerged PRs #407/#430; no release (≤0.0.17) or
+  Ubuntu package has them.
+
+## Next
+
+- Watch [nvidia-vaapi-driver PR #430](https://github.com/elFarto/nvidia-vaapi-driver/pull/430)
+  (builds on #407). Once merged and shipped in an Ubuntu package, roll back our pinned
+  build: delete `[bash.nvidia_vaapi_chromium_fix]` from the recipe, run
+  `dpkg-divert --rename --remove /usr/lib/x86_64-linux-gnu/dri/nvidia_drv_video.so`,
+  upgrade the package, restart Brave.
+
 ## Action Log
 
 - 2026-05-24: Applied Option C (boot_vga flip + `KWIN_DRM_DEVICES`/`VULKAN_ADAPTER` env
@@ -77,3 +101,8 @@ monitors**; snappy on the internal 1080p panel.
   same `just up`) to restore HW video decode on the NVIDIA node. After reboot: Brave reports
   Video Decode + Encode "Hardware accelerated", 4K video plays with silent CPU, whole system
   feels snappy. Investigation closed.
+- 2026-06-07: Reopened; diagnosed live (see section above). Firefox interim rejected:
+  snap confinement can't load the host shim. Built PR #430 @ `288a7ba` in an ephemeral
+  podman container; isolated Brave with the patched `.so` played 4K AV1 at NVDEC 16–17%,
+  18% CPU (was 407%), zero errors. Codified as `[bash.nvidia_vaapi_chromium_fix]`
+  (container build at pinned commit + `dpkg-divert`). Pending: `just up`, restart Brave.
