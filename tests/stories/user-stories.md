@@ -365,6 +365,12 @@ the operator the `[url]` rustup install must run before `[cargo]` (typically via
 
 Latest versions are looked up concurrently from crates.io for the plan.
 
+#### 4.1.5 latest version probes are time bounded
+
+Every crates.io probe passes a timeout, so a stalled registry connection fails
+fast to "unknown latest" rather than wedging the thread pool and hanging the
+plan forever — the failure mode that left `just plan` stuck near 97%.
+
 ### 4.2 [Install and upgrade Python CLI tools](test_4_package_manager_wrappers.py)
 
 > As an operator, I want to declare Python CLI tools and have each installed in its
@@ -464,6 +470,21 @@ while `url` carries the host.
 url = "updates.signal.org/desktop/apt"
 key_url = "keys.asc"
 suites = "xenial"
+```
+
+#### 5.1.6 pin priority writes origin pin into preferences
+
+`pin_priority` writes `/etc/apt/preferences.d/<name>.pref` pinning the repo's
+origin host (derived from `uris`) to that priority, so a package the repo ships
+can outrank the Ubuntu-archive pin (`[bash.ubuntu_pin]`, priority 900) instead
+of apt silently keeping the older universe build. The repo counts as configured
+only once that pref file also exists, alongside the keyring and `.sources`.
+
+```toml
+[apt_repo.github-cli]
+url = "cli.github.com/packages"
+key_url = "githubcli-archive-keyring.gpg"
+pin_priority = 1001
 ```
 
 ### 5.2 [Install files with exact content](test_5_configuring_system_state.py)

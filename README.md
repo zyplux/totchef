@@ -162,7 +162,7 @@ the box:
 | `[file.<name>]` | install a file with exact content | `path`, `source` or `content`, `mode`, `pre_hook`, `post_hook` |
 | `[conf.<name>]` | own specific lines of a config file | `target`, `line` or `lines`, `pre_hook`, `post_hook` |
 | `[bash.<name>]` | idempotent shell snippets | `current_state`, `desired_state`, `apply`, `pre_hook`, `post_hook` |
-| `[apt_repo.<name>]` | third-party apt repos + keys (root) | `key_url`, `uris`, `suites`, `components`, `architectures` |
+| `[apt_repo.<name>]` | third-party apt repos + keys (root) | `key_url`, `uris`, `suites`, `components`, `architectures`, `pin_priority` |
 | `[apt_pkg]` | apt packages via `nala` (root) | `packages` |
 | `[snap]` | snap packages (root) | `packages` |
 | `[desktop.<app>]` | `.desktop` `Exec=` overrides | `desktop`, `features`, `switches` |
@@ -249,6 +249,8 @@ decision about what changed and what to run.
 | `totchef --version` | Print the version. |
 
 All recipe commands accept `--recipe/-r PATH`.
+
+Every run also writes a full log to `~/.local/state/totchef/logs/totchef-<timestamp>.log` (honors `$XDG_STATE_HOME`).
 
 Set `TOTCHEF_INLINE=1` to run every cook in the foreground — no fork, no `sudo` — with logs streamed straight to the terminal. Use it to debug a cook or to apply under an existing root shell.
 

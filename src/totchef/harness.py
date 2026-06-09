@@ -88,6 +88,7 @@ def find_binary(name: str) -> Path | None:
 
 
 USER_AGENT = "totchef"
+FETCH_TIMEOUT_SECONDS = 30
 
 
 def assume_https(url: str) -> str:
@@ -96,9 +97,9 @@ def assume_https(url: str) -> str:
 
 
 def fetch_url(url: str) -> bytes:
-    """HTTP GET. Custom UA — Signal/herdr CDNs 403 the urllib default."""
+    """Time-bounded HTTP GET (a stall raises, never hangs). Custom UA — Signal/herdr CDNs 403 the urllib default."""
     request = Request(url, headers={"User-Agent": USER_AGENT})
-    with urlopen(request) as response:
+    with urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
         return response.read()
 
 

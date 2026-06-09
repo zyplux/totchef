@@ -60,6 +60,17 @@ def test_4_1_4_latest_crate_versions_looked_up_concurrently(recipe, http, totche
     assert http.max_concurrent_requests == 2  # the two crates.io fetches overlapped
 
 
+def test_4_1_5_latest_version_probes_are_time_bounded(recipe, http, totchef):
+    """Every crates.io probe passes a timeout, so a stalled registry connection fails fast to 'unknown latest' rather than wedging the thread pool and hanging the plan forever."""
+    recipe.declares("cargo", packages=["ripgrep"])
+    http.arrange("crates.io/api/v1/crates/ripgrep", '{"crate": {"max_stable_version": "14.1.1"}}')
+
+    totchef.plan()
+
+    http.expect_fetched("crates.io/api/v1/crates/ripgrep")
+    http.expect_bounded_timeouts()
+
+
 # 4.2 Install and upgrade Python CLI tools
 
 

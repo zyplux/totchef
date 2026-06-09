@@ -93,6 +93,34 @@ def test_5_1_5_relative_urls_resolve_against_the_repo_url(recipe, scenario, chef
     chef(baseless).lint().assert_rejected("set `url` or absolute URLs")
 
 
+def test_5_1_6_pin_priority_writes_origin_pin_into_preferences(recipe, http, totchef, tmp_path):
+    """`pin_priority` writes `/etc/apt/preferences.d/<name>.pref` pinning the repo's origin host (derived from `uris`) to that priority, so a package it ships can outrank the Ubuntu-archive pin; the repo counts as configured only once that pref also exists."""
+    keyring = tmp_path / "vendor.gpg"
+    sources = tmp_path / "vendor.sources"
+    prefs = tmp_path / "vendor.pref"
+    recipe.declares(
+        "apt_repo",
+        "vendor",
+        key_url="https://cli.github.test/key",
+        uris="https://cli.github.test/packages",
+        keyring=str(keyring),
+        source_path=str(sources),
+        preferences_path=str(prefs),
+        pin_priority=1001,
+    )
+    http.arrange("cli.github.test/key", "raw-key")
+
+    totchef.up().assert_succeeded()
+
+    pin = prefs.read_text()
+    assert "Package: *" in pin
+    assert "Pin: origin cli.github.test" in pin
+    assert "Pin-Priority: 1001" in pin
+
+    prefs.unlink()  # the pin is gone on disk → drift, even though keyring + sources remain
+    totchef.plan().assert_shows("apt_repo.vendor", "would apply")
+
+
 # 5.2 Install files with exact content
 
 

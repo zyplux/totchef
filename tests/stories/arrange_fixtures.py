@@ -194,6 +194,7 @@ class FakeHttp(HttpAssertions):
 
     def __init__(self) -> None:
         self.requests: list[str] = []
+        self.timeouts: list[object] = []
         self._responses: list[HttpResponse] = []
         self.concurrency = ConcurrencyProbe()
 
@@ -214,6 +215,7 @@ class FakeHttp(HttpAssertions):
     def urlopen(self, request: object, *args: object, **kwargs: object) -> _Reply:
         url = str(getattr(request, "full_url", request))
         self.requests.append(url)
+        self.timeouts.append(kwargs.get("timeout", args[1] if len(args) > 1 else None))
         with self.concurrency.track():
             for response in self._responses:
                 if response.match in url:

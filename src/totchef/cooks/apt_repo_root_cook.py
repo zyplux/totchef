@@ -1,8 +1,9 @@
-"""StateCook for [apt_repo.<name>] — third-party apt repos, each configured with a keyring under /usr/share/keyrings and a `Signed-By:` `.sources` file, both named after the entry. `url` is the repo's base (scheme optional, https assumed): `key_url`/`uris` may be paths relative to it, `uris` defaulting to the base itself; absolute URLs work as before. Runs as root; depends on bash.apt_prereqs."""
+"""StateCook for [apt_repo.<name>] — third-party apt repos, each configured with a keyring under /usr/share/keyrings and a `Signed-By:` `.sources` file, both named after the entry. `url` is the repo's base (scheme optional, https assumed): `key_url`/`uris` may be paths relative to it, `uris` defaulting to the base itself; absolute URLs work as before. An optional `pin_priority` writes a `/etc/apt/preferences.d/<name>.pref` pinning the repo's origin to that priority — punch a declared hole through the Ubuntu-archive pin so this repo wins for the packages it ships. Runs as root; depends on bash.apt_prereqs."""
 
 import platform
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from loguru import logger
 from pydantic import model_validator
@@ -13,6 +14,7 @@ from totchef.harness import assume_https, fetch_url, write_if_changed
 
 KEYRINGS_DIR = Path("/usr/share/keyrings")
 SOURCES_DIR = Path("/etc/apt/sources.list.d")
+PREFERENCES_DIR = Path("/etc/apt/preferences.d")
 
 
 def resolve_repo_url(base_url: str | None, url: str | None) -> str:
@@ -34,6 +36,8 @@ class AptRepoEntry(EntrySpec):
     architectures: str | None = None
     keyring: str | None = None
     source_path: str | None = None
+    pin_priority: int | None = None
+    preferences_path: str | None = None
 
     @model_validator(mode="after")
     def _resolve_urls(self) -> "AptRepoEntry":
@@ -60,6 +64,22 @@ def build_source_path(name: str, repo: AptRepoEntry) -> Path:
     return Path(repo.source_path) if repo.source_path else SOURCES_DIR / f"{name}.sources"
 
 
+def build_preferences_path(name: str, repo: AptRepoEntry) -> Path:
+    return Path(repo.preferences_path) if repo.preferences_path else PREFERENCES_DIR / f"{name}.pref"
+
+
+def build_pin_origin(repo: AptRepoEntry) -> str:
+    """The site host apt records for this repo — what `Pin: origin <host>` matches — taken from the resolved `uris` (e.g. cli.github.com from https://cli.github.com/packages)."""
+    host = urlparse(repo.uris or "").hostname
+    if not host:
+        raise ValueError(f"cannot derive a pin origin host from uris {repo.uris!r}")
+    return host
+
+
+def render_pin(name: str, origin: str, priority: int) -> str:
+    return f"# {name}: prefer this origin's packages (overrides totchef's Ubuntu-archive pin).\nPackage: *\nPin: origin {origin}\nPin-Priority: {priority}\n"
+
+
 def install_repo_key(name: str, key_url: str, keyring: Path) -> bool:
     data = fetch_url(key_url)
     # ASCII-armored keys start with the RFC 4880 §7.2 header; binary OpenPGP
@@ -84,6 +104,9 @@ def configure_repo(name: str, repo: AptRepoEntry, release: str) -> bool:
         lines.append(f"Architectures: {repo.architectures}")
     lines.append(f"Signed-By: {keyring}")
     changed |= write_if_changed(build_source_path(name, repo), "\n".join(lines) + "\n")
+    if repo.pin_priority is not None:
+        pin = render_pin(name, build_pin_origin(repo), repo.pin_priority)
+        changed |= write_if_changed(build_preferences_path(name, repo), pin)
     return changed
 
 
@@ -95,6 +118,8 @@ class AptRepoCook(StateCook[AptRepoEntry]):
         states: dict[str, str] = {}
         for name, repo in self.entries.items():
             present = build_keyring_path(name, repo).exists() and build_source_path(name, repo).exists()
+            if repo.pin_priority is not None:
+                present = present and build_preferences_path(name, repo).exists()
             states[name] = "configured" if present else "absent"
         return states
 

@@ -36,12 +36,19 @@ class TerminalAssertions:
 
 
 class HttpAssertions:
-    """Assertion half of the network double: verify what was fetched. The arrange half (arrange_fixtures.FakeHttp) records each URL into `requests`."""
+    """Assertion half of the network double: verify what was fetched. The arrange half (arrange_fixtures.FakeHttp) records each URL into `requests` and each call's timeout into `timeouts`."""
 
     requests: list
+    timeouts: list
 
     def expect_fetched(self, match: str) -> None:
         assert any(match in url for url in self.requests), f"expected a fetch matching {match!r}, but only fetched: {self.requests or '(nothing)'}"
+
+    def expect_bounded_timeouts(self) -> None:
+        """Every fetch must carry a positive timeout, so a stalled upstream raises instead of hanging the probe/run forever."""
+        assert self.timeouts and all(isinstance(t, (int, float)) and t > 0 for t in self.timeouts), (
+            f"every fetch must pass a positive timeout; got: {self.timeouts or '(no fetches)'}"
+        )
 
 
 @dataclass

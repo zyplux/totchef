@@ -217,6 +217,7 @@ keyring = "/usr/share/keyrings/microsoft.gpg"
 [apt_repo.github-cli]
 url = "cli.github.com/packages"
 key_url = "githubcli-archive-keyring.gpg"
+pin_priority = 1001
 
 [apt_repo.signal-desktop]
 url = "updates.signal.org/desktop/apt"
