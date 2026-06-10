@@ -23,8 +23,11 @@ update_guard = "command -v herdr >/dev/null || exit 0; herdr server stop || true
 [url.agy]
 url = "antigravity.google/cli/install.sh"
 
+# Depends on apt_pkg for the source-build toolchain (build-essential, pkg-config,
+# libssl-dev): binstall falls back to `cargo install` for crates without prebuilt
+# binaries (e.g. cargo-update), and openssl-sys links the system OpenSSL.
 [cargo]
-depends_on = ["url.rustup"]
+depends_on = ["url.rustup", "apt_pkg"]
 packages = [
     "cargo-binstall",
     "cargo-update",
@@ -231,6 +234,9 @@ depends_on = [
     "bash.code_insiders_debconf",
 ]
 packages = [
+    "build-essential",
+    "pkg-config",
+    "libssl-dev",
     "just",
     "ghostty",
     "nala",
