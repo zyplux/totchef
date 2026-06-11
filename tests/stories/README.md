@@ -1,5 +1,14 @@
 # stories
 
+The numbered `<n>_<section>.md` docs describe `totchef` strictly from the **user's
+point of view** — what someone running `totchef` (or authoring a recipe, or extending
+it) can do and observe. The two roles referenced throughout:
+
+- **Operator** — the person who owns a machine, writes its `recipe.toml`, and runs
+  `totchef` to converge it.
+- **Cook author** — a developer who extends `totchef` with a new domain (a "cook")
+  via a plugin or a local file.
+
 End-to-end, prose-style tests over fixtures. A test names the fixtures it needs and
 reads like the user story it covers. Each one drives the whole stack — recipe parse,
 dependency graph, cook probe/act, the chef's diff, and the real report rendering —
@@ -11,7 +20,7 @@ builder, schema validation), see the unit tests alongside.
 
 ## Source of truth — one direction only
 
-`user-stories.md` is the source of truth for these tests; the tests are the source of
+The story docs are the source of truth for these tests; the tests are the source of
 truth for production code. The arrow never points back:
 
 - **Stories know nothing about tests.** A story describes user-facing behavior. **Never

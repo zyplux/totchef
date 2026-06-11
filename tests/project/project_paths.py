@@ -19,4 +19,7 @@ REPO_ROOT = find_repo_root()
 SRC = REPO_ROOT / "src"
 TESTS = REPO_ROOT / "tests"
 STORIES_DIR = REPO_ROOT / "tests" / "stories"
-STORIES_DOC = STORIES_DIR / "user-stories.md"
+
+
+def list_story_docs() -> list[Path]:
+    return sorted(STORIES_DIR.glob("[0-9]_*.md"))

@@ -1,13 +1,13 @@
-"""Derives the story-header links in user-stories.md from the tests/stories test files — each h3 story header links to its section's test file, h4 criterion headers stay plain; run as a script (`just lint` does) it refreshes stale links in place."""
+"""Derives the story-header links in the numbered story docs from the tests/stories test files — each h2 story header links to its section's test file, h3 criterion headers stay plain; run as a script (`just lint` does) it refreshes stale links in place."""
 
 import ast
 import re
 from dataclasses import dataclass
 
-from project_paths import STORIES_DIR, STORIES_DOC
+from project_paths import STORIES_DIR, list_story_docs
 
-H3_HEADER = re.compile(r"^### (\d+\.\d+) (.+)$")
-H4_HEADER = re.compile(r"^#### (\d+(?:\.\d+)+) (.+)$")
+STORY_HEADER = re.compile(r"^## (\d+\.\d+) (.+)$")
+CRITERION_HEADER = re.compile(r"^### (\d+(?:\.\d+)+) (.+)$")
 LINKED_TITLE = re.compile(r"^\[(?P<title>.+)\]\((?P<target>[^)]+)\)$")
 
 
@@ -56,7 +56,7 @@ def strip_link(rest: str) -> str:
 def parse_headers(doc: str) -> dict[str, Header]:
     headers: dict[str, Header] = {}
     for line in doc.splitlines():
-        header = H4_HEADER.match(line)
+        header = CRITERION_HEADER.match(line)
         if not header:
             continue
         story_id, rest = header.group(1), header.group(2)
@@ -74,27 +74,32 @@ def render_linked_doc(doc: str, tests: dict[str, StoryTest]) -> str:
     for raw in doc.splitlines(keepends=True):
         stripped = raw.rstrip("\n")
         newline = raw[len(stripped) :]
-        h3 = H3_HEADER.match(stripped)
-        h4 = H4_HEADER.match(stripped)
-        if h3:
-            story_id, title = h3.group(1), strip_link(h3.group(2))
+        story = STORY_HEADER.match(stripped)
+        criterion = CRITERION_HEADER.match(stripped)
+        if story:
+            story_id, title = story.group(1), strip_link(story.group(2))
             file = files.get(story_id.split(".")[0])
-            rendered.append(raw if file is None else f"### {story_id} [{title}]({file}){newline}")
-        elif h4:
-            story_id, title = h4.group(1), strip_link(h4.group(2))
-            rendered.append(f"#### {story_id} {title}{newline}")
+            rendered.append(raw if file is None else f"## {story_id} [{title}]({file}){newline}")
+        elif criterion:
+            story_id, title = criterion.group(1), strip_link(criterion.group(2))
+            rendered.append(f"### {story_id} {title}{newline}")
         else:
             rendered.append(raw)
     return "".join(rendered)
 
 
-def sync_links() -> bool:
-    doc = STORIES_DOC.read_text()
-    relinked = render_linked_doc(doc, collect_story_tests())
-    if relinked != doc:
-        STORIES_DOC.write_text(relinked)
-    return relinked != doc
+def sync_links() -> list[str]:
+    tests = collect_story_tests()
+    refreshed: list[str] = []
+    for doc_path in list_story_docs():
+        doc = doc_path.read_text()
+        relinked = render_linked_doc(doc, tests)
+        if relinked != doc:
+            doc_path.write_text(relinked)
+            refreshed.append(doc_path.name)
+    return refreshed
 
 
 if __name__ == "__main__":
-    print(f"{STORIES_DOC.name}: links refreshed" if sync_links() else f"{STORIES_DOC.name}: links fresh")
+    refreshed = sync_links()
+    print(f"links refreshed: {', '.join(refreshed)}" if refreshed else "story links fresh")
