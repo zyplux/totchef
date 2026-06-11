@@ -73,9 +73,12 @@ monitors**; snappy on the internal 1080p panel.
 
 ## Next
 
-- Watch [nvidia-vaapi-driver PR #430](https://github.com/elFarto/nvidia-vaapi-driver/pull/430)
-  (builds on #407). Once merged and shipped in an Ubuntu package, roll back our pinned
-  build: delete `[bash.nvidia_vaapi_chromium_fix]` from the recipe, run
+- Wait for [nvidia-vaapi-driver PR #430](https://github.com/elFarto/nvidia-vaapi-driver/pull/430)
+  (builds on #407) to merge — watched automatically: the recipe entry carries a
+  `remove_when` probe, so every `just up`/`just plan` checks and announces the merge
+  in the `Action required` block. When it fires, advance the watch to "fixed release
+  reached the Ubuntu archive"; once shipped, roll back the pinned build: delete
+  `[bash.nvidia_vaapi_chromium_fix]`, run
   `dpkg-divert --rename --remove /usr/lib/x86_64-linux-gnu/dri/nvidia_drv_video.so`,
   upgrade the package, restart Brave.
 
@@ -106,3 +109,8 @@ monitors**; snappy on the internal 1080p panel.
   podman container; isolated Brave with the patched `.so` played 4K AV1 at NVDEC 16–17%,
   18% CPU (was 407%), zero errors. Codified as `[bash.nvidia_vaapi_chromium_fix]`
   (container build at pinned commit + `dpkg-divert`). Pending: `just up`, restart Brave.
+- 2026-06-11: Upstream check — #430 and #407 still open (no maintainer response; PR head
+  unchanged at `288a7ba`, i.e. exactly our pinned commit), latest release still 0.0.17,
+  Ubuntu still ships 0.0.14-1. Built `remove_when`/`remove_how` expiry watches into
+  totchef (user-stories §2.5) and put one on `[bash.nvidia_vaapi_chromium_fix]` watching
+  the PR merge.

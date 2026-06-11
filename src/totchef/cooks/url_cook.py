@@ -72,6 +72,7 @@ def update_existing(entry: UrlEntry, bin_path: Path) -> None:
 
 class UrlCook(VersionedCook):
     entry_model = UrlEntry
+    entry_keyed = True
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)

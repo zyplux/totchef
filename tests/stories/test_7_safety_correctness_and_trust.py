@@ -3,7 +3,7 @@
 GIT_NEEDS_INSTALL = "git:\n  Installed: (none)\n  Candidate: 1:2.40\n  Version table:\n     1:2.40 500\n        500 http://archive noble/main amd64 Packages\n"
 
 
-# 6.1 Trust that re-runs only change what drifted
+# 7.1 Trust that re-runs only change what drifted
 
 
 def test_7_1_1_cooks_probe_and_act_only_on_the_difference(recipe, terminal, http, totchef, system, tmp_path):
@@ -36,7 +36,7 @@ def test_7_1_2_post_hooks_fire_only_on_actual_change(recipe, terminal, totchef, 
     terminal.expect_not_ran("daemon-reload")
 
 
-# 6.2 Understand that totchef creates and updates but never prunes
+# 7.2 Understand that totchef creates and updates but never prunes
 
 
 def test_7_2_1_convergence_is_create_update_only_never_prunes(recipe, totchef, tmp_path):
@@ -53,7 +53,7 @@ def test_7_2_1_convergence_is_create_update_only_never_prunes(recipe, totchef, t
     assert artifact.exists()  # the artifact is left in place — teardown is manual
 
 
-# 6.3 Escalate to root only for the apply, and drop privilege otherwise
+# 7.3 Escalate to root only for the apply, and drop privilege otherwise
 
 
 def test_7_3_1_up_re_execs_under_sudo_pinning_recipe_and_log(cli, monkeypatch, tmp_path):
@@ -117,7 +117,7 @@ def test_7_3_3_plan_and_lint_never_escalate(recipe, terminal, totchef, cli, monk
     assert escalations == []  # neither plan nor lint escalated, though apt_pkg is a root-scoped cook
 
 
-# 6.4 Distinguish recoverable failures from fatal ones
+# 7.4 Distinguish recoverable failures from fatal ones
 
 
 def test_7_4_1_hard_failure_aborts_the_apply_and_exits_1(recipe, terminal, totchef):
@@ -159,7 +159,23 @@ def test_7_4_3_report_names_which_cooks_hard_or_soft_failed(recipe, terminal, to
     assert "failed" in report.report
 
 
-# 6.5 Skip steps that shouldn't run right now
+def test_7_4_4_a_crash_outside_any_cook_still_reports_loudly(recipe, totchef, monkeypatch):
+    """An unexpected exception after logs are redirected — a totchef bug, not a recipe failure — still exits 1 with the traceback in view, never a silent death."""
+    recipe.declares("bash", "step", apply="true")
+
+    def explode(config, dry_run):
+        raise RuntimeError("scheduler bug")
+
+    monkeypatch.setattr("totchef.cli.run_recipe", explode)
+
+    report = totchef.up()
+
+    report.assert_hard_failed()
+    report.assert_logged("RuntimeError")  # the full traceback scrolled past …
+    report.assert_logged("scheduler bug")  # … naming the actual error
+
+
+# 7.5 Skip steps that shouldn't run right now
 
 
 def test_7_5_1_pre_hook_nonzero_exit_skips_the_item(recipe, terminal, totchef, tmp_path):

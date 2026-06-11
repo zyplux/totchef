@@ -5,18 +5,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo
+from pydantic import BaseModel, ConfigDict, ValidationInfo, model_validator
 
 Status = Literal["ok", "soft_fail", "hard_fail"]
 
 
 class EntrySpec(BaseModel):
-    """Base for every cook's recipe-entry schema; `extra='forbid'` fails a typo'd recipe key instead of silently ignoring it. Carries the `pre_hook` guard / `post_hook` pair every cook honors — a versioned cook gates/refreshes the whole section, a state cook gates/refreshes each resource."""
+    """Base for every cook's recipe-entry schema; `extra='forbid'` fails a typo'd recipe key instead of silently ignoring it. Carries the `pre_hook` guard / `post_hook` pair every cook honors — a versioned cook gates/refreshes the whole section, a state cook gates/refreshes each resource — plus the `remove_when` expiry probe / `remove_how` instruction pair chef surfaces once the probe fires."""
 
     model_config = ConfigDict(extra="forbid")
 
     pre_hook: str | None = None
     post_hook: str | None = None
+    remove_when: str | None = None
+    remove_how: str | None = None
+
+    @model_validator(mode="after")
+    def validate_remove_how_has_a_condition(self) -> "EntrySpec":
+        """`remove_how` is the instruction `remove_when` unlocks; without the probe it would never surface."""
+        if self.remove_how and not self.remove_when:
+            raise ValueError("`remove_how` has no `remove_when` — declare the probe that makes this entry removable, or drop `remove_how`")
+        return self
 
 
 def get_entry_name(info: ValidationInfo) -> str | None:
@@ -80,10 +89,11 @@ class CookResult:
 
 
 class CookBase:
-    """Base for every cook; an always-root `<section>_root_cook.py` sets `needs_root = True` (else least privilege)."""
+    """Base for every cook; an always-root `<section>_root_cook.py` sets `needs_root = True` (else least privilege). `entry_keyed` declares which slice shape the constructor consumes: `{entry_name: fields}` (StateCook, url) or the flat fields dict (package lists)."""
 
     needs_root: bool = False
     entry_model: ClassVar[type[EntrySpec] | None] = None
+    entry_keyed: ClassVar[bool] = False
 
     def __init__(self, section: dict) -> None:
         self.section = section
@@ -139,6 +149,8 @@ class PackageListCook(VersionedCook):
 
 class StateCook[EntryModel: EntrySpec](CookBase):
     """Desired-state cook over a subtable section; the base serves `list_resources` and default `get_hooks`, subclasses implement the get_current_state/get_desired_state/apply_resource diff."""
+
+    entry_keyed = True
 
     def __init__(self, section: dict) -> None:
         super().__init__(section)

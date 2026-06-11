@@ -18,6 +18,7 @@ from totchef.harness import SOFT_FAIL_EXIT
 from totchef.logs import SHARED_LOG_ENV, drain_logs, inline_mode, set_terminal_echo, start_logging, write_log
 from totchef.recipe import RECIPE_ENV, find_recipe
 from totchef.registry import cook_registry
+from totchef.removal_watch import append_removal_notices
 from totchef.schema_lint import validate
 from totchef.terminal import show_table
 
@@ -110,7 +111,7 @@ def preview_plan(config: dict) -> None:
 
 
 def apply(recipe_path: Path, dry_run: bool) -> None:
-    """Load and validate the recipe, then run it; an apply escalates to root and previews the plan first, then reports and signals failures through the exit code. Validation gates every run and comes before escalation and log redirection, so an invalid recipe is rejected loudly on the real stderr without ever prompting for a password."""
+    """Load and validate the recipe, then run it; an apply escalates to root and previews the plan first, then reports and signals failures through the exit code. Validation gates every run and comes before escalation and log redirection, so an invalid recipe is rejected loudly on the real stderr without ever prompting for a password; a crash past that point is logged and drained through the pump before exit 1, because a traceback written to the redirected stderr would die with the process."""
     config = load_recipe(recipe_path)
     validate(config)
 
@@ -119,28 +120,37 @@ def apply(recipe_path: Path, dry_run: bool) -> None:
     start_logging(echo_to_terminal=not dry_run)
     start = time.monotonic()
 
-    if not dry_run:
-        preview_plan(config)
+    try:
+        if not dry_run:
+            preview_plan(config)
 
-    results = run_recipe(config, dry_run)
-    drain_logs()
-    set_terminal_echo(True)
-    print_report(results, dry_run, elapsed=time.monotonic() - start)
+        results = run_recipe(config, dry_run)
+        append_removal_notices(config, results)
+        drain_logs()
+        set_terminal_echo(True)
+        print_report(results, dry_run, elapsed=time.monotonic() - start)
 
-    hard = [r.cook for r in results.values() if r.status == "hard_fail"]
-    soft = [r.cook for r in results.values() if r.status == "soft_fail"]
-    for result in results.values():
-        if result.status == "hard_fail" and result.message:
-            logger.error(f"[{result.cook}] {result.message}")
-    if hard:
-        logger.error(f"=== Hard failures: {', '.join(hard)} — apply aborted ===")
+        hard = [r.cook for r in results.values() if r.status == "hard_fail"]
+        soft = [r.cook for r in results.values() if r.status == "soft_fail"]
+        for result in results.values():
+            if result.status == "hard_fail" and result.message:
+                logger.error(f"[{result.cook}] {result.message}")
+        if hard:
+            logger.error(f"=== Hard failures: {', '.join(hard)} — apply aborted ===")
+            drain_logs()
+            raise typer.Exit(1)
+        if soft:
+            logger.warning(f"=== Soft failures: {', '.join(soft)} (scroll back) ===")
+            drain_logs()
+            raise typer.Exit(SOFT_FAIL_EXIT)
         drain_logs()
-        raise typer.Exit(1)
-    if soft:
-        logger.warning(f"=== Soft failures: {', '.join(soft)} (scroll back) ===")
+    except typer.Exit:
+        raise
+    except Exception:
+        set_terminal_echo(True)
+        logger.exception("=== Crashed outside any cook — a totchef bug, not a recipe failure ===")
         drain_logs()
-        raise typer.Exit(SOFT_FAIL_EXIT)
-    drain_logs()
+        raise typer.Exit(1) from None
 
 
 @app.command()

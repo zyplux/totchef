@@ -40,6 +40,22 @@ def test_2_1_2_operator_declares_desired_state_not_steps(recipe, totchef, tmp_pa
     totchef.up().assert_shows("file.drop", "unchanged")  # and: present == desired → no-op
 
 
+def test_2_1_3_package_sections_split_into_named_entries(recipe, terminal, totchef):
+    """A `packages = [...]` section can fan out like any subtable: each entry is its own node with its own packages and dependencies."""
+    terminal.arrange("apt-cache policy", APT_CACHE_POLICY)
+    recipe.declares("bash", "prereqs", apply="bootstrap-apt")
+    recipe.declares("apt_pkg", "toolchain", packages=["git"], depends_on=["bash.prereqs"])
+    recipe.declares("apt_pkg", "apps", packages=["blender"], depends_on=["apt_pkg.toolchain"])
+
+    totchef.lint().assert_valid()
+
+    plan = totchef.plan()
+
+    plan.assert_shows("apt_pkg.git", "would install")  # the toolchain group's package …
+    plan.assert_shows("apt_pkg.blender", "would install")  # … and the other group's, each from its own node
+    plan.assert_ran_before("apt_pkg.git", "apt_pkg.blender")  # ordered by the entries' own depends_on
+
+
 # 2.2 Express ordering between resources
 
 
@@ -143,3 +159,74 @@ def test_2_4_2_lint_forbids_needs_root_on_a_subtable_header(scenario, chef):
     wholesale.declares("bash", "step", apply="x")
 
     chef(wholesale).lint().assert_rejected("needs_root")
+
+
+# 2.5 Declare when a temporary entry expires
+
+
+def test_2_5_1_remove_when_satisfied_surfaces_remove_how_in_action_required(recipe, terminal, totchef):
+    """While `remove_when` exits non-zero (still waiting — a failing probe reads the same) the run is silent about it; once it exits 0 the `remove_how` instruction lands in the Action required block labeled with the node, on every run until the entry is deleted."""
+    recipe.declares(
+        "bash",
+        "vaapi_fix",
+        apply="install-shim",
+        current_state="echo present",
+        desired_state="present",
+        remove_when="gh api repos/upstream/fix/pulls/430 --jq .merged | grep -qx true",
+        remove_how="PR #430 merged — drop this workaround.",
+    )
+    terminal.arrange("echo present", "present")
+    terminal.arrange("gh api", exit_code=1)  # upstream hasn't merged yet
+
+    waiting = totchef.up()
+
+    waiting.assert_succeeded()
+    terminal.expect_ran("gh api")  # the probe did run …
+    assert "Action required" not in waiting.terminal_report  # … but still-waiting stays silent
+
+    terminal.arrange("gh api", exit_code=0)  # merged upstream
+
+    fired = totchef.up()
+
+    fired.assert_succeeded()
+    fired.assert_logged("PR #430 merged")  # announced live during the run …
+    block = fired.terminal_report.split("Action required", 1)[1]
+    assert "bash.vaapi_fix" in block  # … and repeated after the report, labeled with the node
+    assert "PR #430 merged" in block
+
+    nag = totchef.up()
+    assert "PR #430 merged" in nag.terminal_report  # keeps firing until the entry is removed
+
+
+def test_2_5_2_plan_also_evaluates_remove_when(recipe, terminal, totchef):
+    """A dry run evaluates the probes too — `plan` doubles as "check everything I'm waiting on" — and a watch without `remove_how` carries the generic removal notice."""
+    recipe.declares("bash", "workaround", apply="install-it", remove_when="upstream-shipped-the-fix")
+
+    plan = totchef.plan()
+
+    plan.assert_succeeded()
+    block = plan.terminal_report.split("Action required", 1)[1]
+    assert "bash.workaround" in block
+    assert "can be removed" in block  # no remove_how → the generic notice
+    terminal.expect_not_ran("install-it")  # still a dry run: probed, never applied
+
+
+def test_2_5_3_any_entry_or_plain_section_can_carry_remove_when(recipe, terminal, system, totchef, tmp_path):
+    """`remove_when`/`remove_how` sit on the base entry contract: a subtable entry and a plain-data section alike declare their expiry."""
+    recipe.declares("file", "pin", path=str(tmp_path / "pin.conf"), content="pinned\n", remove_when="true", remove_how="pin obsolete")
+    recipe.declares("uv", packages=[], remove_when="true", remove_how="section obsolete")
+    system.has("uv")
+
+    report = totchef.up()
+
+    block = report.terminal_report.split("Action required", 1)[1]
+    assert "file.pin" in block
+    assert "pin obsolete" in block
+    assert "section obsolete" in block
+
+
+def test_2_5_4_lint_rejects_remove_how_without_remove_when(recipe, totchef):
+    """`remove_how` without `remove_when` is an orphan instruction; lint rejects it naming the missing condition."""
+    recipe.declares("bash", "orphan", apply="x", remove_how="delete me someday")
+
+    totchef.lint().assert_rejected("remove_when")

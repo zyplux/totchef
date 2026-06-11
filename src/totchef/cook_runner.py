@@ -11,15 +11,14 @@ from graphlib import TopologicalSorter
 from loguru import logger
 
 from totchef import shell
-from totchef.cook_base import CookBase, CookResult, ReportRow, StateCook, Status, VersionedCook
+from totchef.cook_base import CookResult, ReportRow, StateCook, Status, VersionedCook
 from totchef.harness import become_user
 from totchef.logs import cook_context, inline_mode
 from totchef.recipe_graph import (
     Node,
+    build_cook,
     build_node_graph,
     build_nodes,
-    load_cook_class,
-    node_slice,
 )
 from totchef.terminal import progress_region
 
@@ -232,13 +231,6 @@ def run_state(cook: StateCook, section: str, dry_run: bool) -> CookResult:
             delayed_messages.append(delayed)
 
     return CookResult(section, pick_worst_status(statuses), rows, delayed_messages=delayed_messages)
-
-
-def build_cook(node: Node, config: dict) -> CookBase:
-    """Construct a node's cook from its recipe slice (validation only, no side effects)."""
-    slice_ = node_slice(config, node)
-    section_slice = {node.entry: slice_} if node.entry is not None else slice_
-    return load_cook_class(node.section)(section_slice)
 
 
 def run_cook(node: Node, config: dict, dry_run: bool) -> CookResult:

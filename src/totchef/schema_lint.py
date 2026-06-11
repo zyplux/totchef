@@ -1,4 +1,4 @@
-"""Lint recipe.toml before chef runs it: every section resolves to a cook, the depends_on graph is acyclic, and each node's slice satisfies its cook's `entry_model`."""
+"""Lint recipe.toml before chef runs it: every section resolves to a cook, the depends_on graph is acyclic, and every node's cook constructs from its slice (the same `build_cook` path a run takes)."""
 
 import sys
 from graphlib import CycleError, TopologicalSorter
@@ -7,22 +7,19 @@ from pydantic import ValidationError
 
 from totchef.recipe_graph import (
     Node,
+    build_cook,
     build_node_graph,
     build_nodes,
     load_cook_class,
-    node_slice,
 )
 
 
 def find_schema_problems(config: dict, nodes: dict[str, Node]) -> list[str]:
-    """Validate each node's slice against its cook's `entry_model`, collecting every Pydantic error as a readable `[node] loc: message` line (empty == valid)."""
+    """Validate each node by constructing its cook — the exact `build_cook` path a run takes, so lint never accepts a shape the run can't build — collecting every Pydantic error as a readable `[node] loc: message` line (empty == valid)."""
     problems: list[str] = []
     for node_id, node in nodes.items():
-        model = load_cook_class(node.section).entry_model
-        if model is None:
-            continue
         try:
-            model.model_validate(node_slice(config, node), context={"entry_name": node.entry})
+            build_cook(node, config)
         except ValidationError as exc:
             for err in exc.errors():
                 loc = ".".join(str(part) for part in err["loc"]) or "(entry)"
@@ -62,7 +59,7 @@ def rule_root_only_on_leaves(config: dict, nodes: dict[str, Node]) -> None:
 
 
 def rule_slices_match_schema(config: dict, nodes: dict[str, Node]) -> None:
-    """Each node's slice validates against its cook's `entry_model`."""
+    """Each node's cook constructs from its slice — the same validation `up` performs."""
     if problems := find_schema_problems(config, nodes):
         sys.exit("ERROR: recipe.toml schema validation failed:\n" + "\n".join(problems))
 

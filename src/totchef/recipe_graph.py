@@ -1,8 +1,9 @@
-"""Recipe -> scheduling graph: turn recipe.toml into a DAG of Nodes (section -> cook resolution lives in registry, graph validation in schema_lint)."""
+"""Recipe -> scheduling graph: turn recipe.toml into a DAG of Nodes and construct each node's cook (section -> cook-class resolution lives in registry, graph validation in schema_lint)."""
 
 import sys
 from dataclasses import dataclass
 
+from totchef.cook_base import CookBase
 from totchef.registry import load_cook_class
 
 # Keys chef reads off a slice, then strips before handing it to the cook.
@@ -98,3 +99,12 @@ def node_slice(config: dict, node: "Node") -> dict:
     if node.entry is not None:
         return merge_section_defaults(config[node.section], node.entry)
     return strip_meta(config[node.section])
+
+
+def build_cook(node: Node, config: dict) -> CookBase:
+    """Construct a node's cook from its recipe slice (validation only, no side effects): an entry-keyed cook receives `{entry: slice}`, any other consumes the slice flat — both lint and the runner construct through here, so lint can never accept a shape a run can't build."""
+    cook_class = load_cook_class(node.section)
+    slice_ = node_slice(config, node)
+    if cook_class.entry_keyed and node.entry is not None:
+        return cook_class({node.entry: slice_})
+    return cook_class(slice_)

@@ -120,6 +120,13 @@ and a `post_hook` (a shell command run **only when the step changed something**)
 on a versioned section like `[bun]` these gate and follow the whole sync, on a
 per-resource section like `[file.<name>]` they gate and follow each resource.
 
+A temporary entry (a pinned workaround waiting on an upstream fix) may declare its
+expiry: `remove_when` is a shell probe (exit 0 means "the thing this entry waits on
+has happened") and `remove_how` the instruction for dismantling it. Every `up` and
+`plan` evaluates the probes as the invoking user; a fired watch puts `remove_how`
+in the end-of-run `Action required` block until the entry is deleted, while a
+failing probe (no network, missing tool) just keeps waiting silently.
+
 ### Section defaults
 
 In a subtable section, keys set on the header are inherited by every entry: lists
