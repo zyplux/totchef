@@ -5,7 +5,14 @@ description = "Declarative, idempotent system configuration for Ubuntu/Kubuntu â
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
-keywords = ["configuration", "idempotent", "ubuntu", "apt", "declarative", "provisioning"]
+keywords = [
+    "configuration",
+    "idempotent",
+    "ubuntu",
+    "apt",
+    "declarative",
+    "provisioning",
+]
 dependencies = [
     "loguru>=0.7",
     "pydantic>=2.13.4",
@@ -13,6 +20,7 @@ dependencies = [
     "toon-format>=0.9.0b1",
     "typer>=0.12",
     "psutil>=7.2.2",
+    "websockets>=14",
 ]
 
 [project.scripts]
@@ -46,14 +54,8 @@ dev = [
     "tomli-w>=1.1",
     "types-psutil>=7.2.2.20260518",
 ]
-lint = [
-    "ruff>=0.11",
-    "rumdl>=0.1.84",
-    "vulture>=2.14",
-]
-typecheck = [
-    "pyrefly>=1.0.0",
-]
+lint = ["ruff>=0.11", "rumdl>=0.1.84", "vulture>=2.14"]
+typecheck = ["pyrefly>=1.0.0"]
 
 [build-system]
 requires = ["hatchling"]
