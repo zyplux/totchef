@@ -19,8 +19,6 @@ dependencies = [
     "rich>=14",
     "toon-format>=0.9.0b1",
     "typer>=0.12",
-    "psutil>=7.2.2",
-    "websockets>=14",
 ]
 
 [project.scripts]
@@ -52,10 +50,12 @@ dev = [
     "pytest>=8",
     "pytest-cov>=6",
     "tomli-w>=1.1",
-    "types-psutil>=7.2.2.20260518",
 ]
 lint = ["ruff>=0.11", "rumdl>=0.1.84", "vulture>=2.14"]
-typecheck = ["pyrefly>=1.0.0"]
+# psutil/websockets are not library deps — they back the standalone files/ctop.py script, which
+# carries its own inline `# dependencies` and runs via `uv run --script`. They live here only so
+# pyrefly can resolve ctop.py's imports; types-psutil supplies psutil's stubs.
+typecheck = ["pyrefly>=1.0.0", "psutil>=7.2.2", "websockets>=14", "types-psutil>=7.2.2.20260518"]
 
 [build-system]
 requires = ["hatchling"]

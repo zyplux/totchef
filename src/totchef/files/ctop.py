@@ -22,6 +22,7 @@ from typing import Annotated
 
 import psutil
 import typer
+from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 from rich.console import Console, Group
 from rich.filesize import decimal as format_filesize
@@ -29,7 +30,7 @@ from rich.live import Live
 from rich.table import Column, Table
 from rich.text import Text
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 VSCODE_PROCESS_NAMES = {"code", "code-insiders", "code-oss"}
 EXTHOST_NODE_FLAGS = ("--inspect-port", "--dns-result-order")
@@ -140,18 +141,21 @@ def sample_processes(tracked: dict[int, psutil.Process]) -> list[ProcessRow]:
     return sorted(rows, key=lambda row: (row.cpu_percent, row.rss_bytes), reverse=True)
 
 
-def list_inspector_ports(pid: int) -> list[int]:
+def list_inspector_addresses(pid: int) -> list[tuple[str, int]]:
     try:
         connections = psutil.Process(pid).net_connections(kind="inet")
     except psutil.Error:
         return []
-    return [conn.laddr.port for conn in connections if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.ip in INSPECTOR_LOCALHOSTS]
+    return [
+        (conn.laddr.ip, conn.laddr.port) for conn in connections if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.ip in INSPECTOR_LOCALHOSTS
+    ]
 
 
 def find_inspector_websocket(pid: int) -> str | None:
-    for port in list_inspector_ports(pid):
+    for ip, port in list_inspector_addresses(pid):
+        host = f"[{ip}]" if ":" in ip else ip
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=INSPECTOR_PROBE_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(f"http://{host}:{port}/json/list", timeout=INSPECTOR_PROBE_TIMEOUT_SECONDS) as response:
                 targets = json.load(response)
         except OSError, ValueError:
             continue
@@ -181,7 +185,7 @@ def sample_exthost_profile(websocket_url: str, seconds: float) -> dict | None:
             call("Profiler.start")
             time.sleep(seconds)
             result = call("Profiler.stop")
-    except OSError, ValueError, TimeoutError:
+    except OSError, ValueError, TimeoutError, WebSocketException:
         return None
     return result.get("profile") if result else None
 

@@ -361,12 +361,10 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "loguru" },
-    { name = "psutil" },
     { name = "pydantic" },
     { name = "rich" },
     { name = "toon-format" },
     { name = "typer" },
-    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -374,7 +372,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "tomli-w" },
-    { name = "types-psutil" },
 ]
 lint = [
     { name = "ruff" },
@@ -382,18 +379,19 @@ lint = [
     { name = "vulture" },
 ]
 typecheck = [
+    { name = "psutil" },
     { name = "pyrefly" },
+    { name = "types-psutil" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "loguru", specifier = ">=0.7" },
-    { name = "psutil", specifier = ">=7.2.2" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "rich", specifier = ">=14" },
     { name = "toon-format", specifier = ">=0.9.0b1" },
     { name = "typer", specifier = ">=0.12" },
-    { name = "websockets", specifier = ">=14" },
 ]
 
 [package.metadata.requires-dev]
@@ -401,14 +399,18 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=6" },
     { name = "tomli-w", specifier = ">=1.1" },
-    { name = "types-psutil", specifier = ">=7.2.2.20260518" },
 ]
 lint = [
     { name = "ruff", specifier = ">=0.11" },
     { name = "rumdl", specifier = ">=0.1.84" },
     { name = "vulture", specifier = ">=2.14" },
 ]
-typecheck = [{ name = "pyrefly", specifier = ">=1.0.0" }]
+typecheck = [
+    { name = "psutil", specifier = ">=7.2.2" },
+    { name = "pyrefly", specifier = ">=1.0.0" },
+    { name = "types-psutil", specifier = ">=7.2.2.20260518" },
+    { name = "websockets", specifier = ">=14" },
+]
 
 [[package]]
 name = "typer"
