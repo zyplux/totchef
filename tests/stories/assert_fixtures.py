@@ -31,6 +31,10 @@ class TerminalAssertions:
         """The stdin piped to the first command matching `match` — e.g. the installer script piped into `bash -s`, or the key bytes piped into `gpg --dearmor`."""
         return next((command.stdin for command in self.commands if match in command.line), None)
 
+    def cwd_for(self, match: str) -> Path | None:
+        """The working directory the first command matching `match` ran in — e.g. a vendor installer piped to `bash` from `$HOME` so its relative bin dir resolves under `~`."""
+        return next((command.cwd for command in self.commands if match in command.line), None)
+
     def _ran_lines(self) -> str:
         return "\n".join(f"  {command.line}" for command in self.commands) or "  (nothing)"
 

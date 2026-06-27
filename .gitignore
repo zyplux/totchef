@@ -6,3 +6,4 @@ logs/
 coverage.json
 htmlcov/
 .claude/settings.local.json
+reference_clones

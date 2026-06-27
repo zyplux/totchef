@@ -98,3 +98,11 @@ still works, reporting the tool as simply `present`.
 
 A `url` without a scheme means https — `url = "bun.sh/install"` fetches
 `https://bun.sh/install`. An explicit scheme passes through unchanged.
+
+### 3.3.8 installers run from home so relative bindirs resolve
+
+The installer is piped to `bash` with `$HOME` as its working directory. Vendor
+scripts assume that — some default to a *relative* bin dir (chezmoi installs to
+`.local/bin`), so running them from anywhere else drops the binary in the wrong
+place. `$HOME` makes a relative bin dir resolve to `~/.local/bin`, exactly where
+the cook's presence check (`find_binary`) looks.

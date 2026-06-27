@@ -3,8 +3,14 @@
 import os
 import subprocess
 import threading
+from pathlib import Path
 
 from loguru import logger
+
+
+def resolve_workdir(cwd: Path | None) -> Path:
+    """Where a command runs: $HOME unless overridden. Anchoring to $HOME (not the inherited launch directory) keeps behavior independent of where totchef was invoked — a user `bash` snippet runs as if typed in a terminal, and a vendor installer defaulting to a relative bin dir lands under ~ where find_binary looks. Resolved per call: become_user repoints $HOME inside each forked user cook."""
+    return cwd if cwd is not None else Path.home()
 
 
 def run(
@@ -14,8 +20,9 @@ def run(
     check: bool = False,
     timeout: float | None = None,
     note: str = "",
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run a command to completion, capturing stdout+stderr; the one-shot half of the bash boundary (probes that read output). `text=False` keeps bytes for binary stdin/stdout (a GPG de-armor)."""
+    """Run a command to completion, capturing stdout+stderr; the one-shot half of the bash boundary (probes that read output). `text=False` keeps bytes for binary stdin/stdout (a GPG de-armor). Runs from $HOME unless `cwd` overrides."""
     if note:
         logger.info(note)
     return subprocess.run(
@@ -25,6 +32,7 @@ def run(
         text=text,
         check=check,
         timeout=timeout,
+        cwd=resolve_workdir(cwd),
     )
 
 
@@ -35,8 +43,9 @@ def stream(
     note: str = "",
     stdin: bytes | None = None,
     check: bool = True,
+    cwd: Path | None = None,
 ) -> None:
-    """Run `cmd`, streaming merged stdout/stderr through logger.info; raises CalledProcessError on non-zero unless check=False; TERM=dumb/NO_COLOR/start_new_session suppress ANSI and /dev/tty bypass."""
+    """Run `cmd`, streaming merged stdout/stderr through logger.info; raises CalledProcessError on non-zero unless check=False; TERM=dumb/NO_COLOR/start_new_session suppress ANSI and /dev/tty bypass. Runs from $HOME unless `cwd` overrides."""
     prefix = f"{tag} " if tag else ""
     if note:
         logger.info(f"{prefix}{note}")
@@ -47,6 +56,7 @@ def stream(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         env=proc_env,
+        cwd=resolve_workdir(cwd),
         start_new_session=True,
     )
     proc_stdout = proc.stdout

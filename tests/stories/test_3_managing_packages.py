@@ -247,3 +247,15 @@ def test_3_3_7_url_scheme_defaults_to_https(recipe, terminal, http, totchef, sys
     totchef.up().assert_shows("url.bun", "installed")
 
     http.expect_fetched("https://bun.sh/install")
+
+
+def test_3_3_8_installers_run_from_home_so_relative_bindirs_resolve(recipe, terminal, http, totchef, system, home):
+    """A `curl | bash` installer runs with $HOME as its working directory, so one that defaults to a *relative* bin dir (chezmoi's `.local/bin`) lands under $HOME where `find_binary` looks — not in whatever directory totchef was invoked from."""
+    recipe.declares("url", "bun", url="https://bun.sh/install")
+    http.arrange("bun.sh/install", "#!/bin/bash")
+    terminal.arrange("bash -s --", effect=lambda: system.has("bun"))
+    terminal.arrange("bun --version", "1.1.0")
+
+    totchef.up().assert_shows("url.bun", "installed")
+
+    assert terminal.cwd_for("bash -s --") == home  # piped to bash from $HOME, not the repo dir
