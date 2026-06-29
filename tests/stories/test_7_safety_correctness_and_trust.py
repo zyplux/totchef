@@ -117,6 +117,32 @@ def test_7_3_3_plan_and_lint_never_escalate(recipe, terminal, totchef, cli, monk
     assert escalations == []  # neither plan nor lint escalated, though apt_pkg is a root-scoped cook
 
 
+def test_7_3_4_frozen_binary_re_execs_by_absolute_path_not_argv0_name(cli, monkeypatch, tmp_path):
+    """A frozen single-file binary is invoked by bare name on PATH (argv[0] == "totchef"), but sudo's secure_path can't find a bare name. The re-exec must run the binary by its absolute sys.executable and pass only the user's args (argv[1:]) — never the bare argv[0]."""
+    recipe_path = tmp_path / "recipe.toml"
+    recipe_path.write_text('[bash.step]\napply = "true"\n')
+    binary = "/home/op/.local/bin/totchef"  # absolute, as PyInstaller resolves sys.executable
+    captured: dict = {}
+
+    def capture_exec(target, argv):
+        captured.update(argv=list(argv))
+        raise SystemExit(0)  # sudo replaces the process — control never returns
+
+    monkeypatch.setattr("os.geteuid", lambda: 1000)  # not root yet
+    monkeypatch.setattr("os.execvp", capture_exec)
+    monkeypatch.setattr("sys.frozen", True, raising=False)  # PyInstaller marks the onefile bundle frozen
+    monkeypatch.setattr("sys.executable", binary)  # the bootloader resolves this to the absolute binary path
+    monkeypatch.setattr("sys.argv", ["totchef", "up", "--recipe", str(recipe_path)])  # bare name, as the shell passes it via PATH
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
+
+    cli.run("up", "--recipe", str(recipe_path))
+
+    relaunch = captured["argv"][2:]  # drop "sudo" and the "--preserve-env=..." flag
+    assert relaunch[0] == binary  # sudo runs the binary by absolute path (found despite secure_path)
+    assert "totchef" not in relaunch  # the bare argv[0] is never handed to sudo — not as a program, not as an arg
+    assert relaunch[1:] == ["up", "--recipe", str(recipe_path)]  # only the user's original args follow
+
+
 # 7.4 Distinguish recoverable failures from fatal ones
 
 

@@ -43,11 +43,12 @@ def prepare(explicit: Path | None) -> Path:
 
 
 def ensure_root(recipe_path: Path) -> None:
-    """Re-exec under sudo if not root, pinning the already-resolved recipe and the shared log path across the boundary (sudo sets SUDO_USER, which become_user drops back to)."""
+    """Re-exec under sudo if not root, pinning the already-resolved recipe and the shared log path across the boundary (sudo sets SUDO_USER, which become_user drops back to). Run the program by its absolute `sys.executable` so sudo's secure_path can't fail to find it: a frozen single-file binary IS that executable, so only the user's args (argv[1:]) follow it; a plain Python invocation runs the interpreter over the script (argv[0]) and its args."""
     if os.geteuid() == 0:
         return
     os.environ[RECIPE_ENV] = str(recipe_path)
-    os.execvp("sudo", ["sudo", f"--preserve-env={SHARED_LOG_ENV},{RECIPE_ENV}", sys.executable, *sys.argv])
+    relaunch = [sys.executable, *sys.argv[1:]] if getattr(sys, "frozen", False) else [sys.executable, *sys.argv]
+    os.execvp("sudo", ["sudo", f"--preserve-env={SHARED_LOG_ENV},{RECIPE_ENV}", *relaunch])
 
 
 def load_recipe(recipe_path: Path) -> dict:

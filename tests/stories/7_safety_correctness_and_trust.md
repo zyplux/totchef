@@ -54,6 +54,15 @@ the next step's PATH.
 
 `plan` and `lint` never escalate.
 
+### 7.3.4 frozen binary re execs by absolute path not argv0 name
+
+A frozen single-file binary (`just build`'s PyInstaller bundle) is invoked by bare
+name on `PATH`, so `sys.argv[0]` is just `"totchef"` while `sys.executable` is the
+resolved absolute path. The sudo re-exec must run that absolute `sys.executable`
+(sudo's `secure_path` can't find a bare name, and an absolute path bypasses the
+search) followed by only the user's args (`argv[1:]`) — never the bare `argv[0]`,
+which sudo would treat as a command to look up or Typer as a bogus sub-command.
+
 ## 7.4 Distinguish recoverable failures from fatal ones
 
 > As an operator, I want failures classified by severity, so that a cosmetic
