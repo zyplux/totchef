@@ -13,12 +13,13 @@ from types import SimpleNamespace
 import pytest
 
 from assert_fixtures import HttpAssertions, TerminalAssertions
-from totchef import harness, shell
+from totchef import harness, registry, shell
 from totchef import terminal as terminal_module
 from totchef.cooks import apt_repo_root_cook
 from totchef.cooks.usr_local_bin_root_cook import UsrLocalBinCook
 from totchef.cooks.usr_local_sbin_root_cook import UsrLocalSbinCook
-from totchef.registry import cook_registry
+
+CHEZMOI_COOK = (Path(__file__).resolve().parents[2] / "examples/totchef_cooks/chezmoi_cook.py").read_text()
 
 
 class RecipeBuilder:
@@ -287,10 +288,14 @@ def system(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeSystem:
 
 @pytest.fixture(autouse=True)
 def fresh_registry() -> Generator[None]:
-    """The cook registry is cached and HOME-dependent (it scans `~/.config/totchef/cooks`); clear it around every test so a local-cook drop-in never leaks."""
-    cook_registry.cache_clear()
+    """Reset the per-run resolution globals around every test so nothing leaks: the cook registry (cached, HOME-dependent — it scans `~/.config/totchef/cooks`), the recipe's pinned custom-cooks dir, and its pinned assets dir."""
+    registry.set_recipe_cooks_dir(None)
+    harness.set_files_dir(None)
+    registry.cook_registry.cache_clear()
     yield
-    cook_registry.cache_clear()
+    registry.set_recipe_cooks_dir(None)
+    harness.set_files_dir(None)
+    registry.cook_registry.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -334,12 +339,38 @@ def apt_sources_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def bundled_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point totchef's bundled-asset dir (totchef/files/) at a temp dir the test populates — for stories about asset contracts rather than the shipped assets themselves."""
-    files_dir = tmp_path / "bundled-files"
+def bundled_files(tmp_path: Path) -> Path:
+    """The recipe's sibling assets dir (totchef_files/), populated by the test — resolved by the real in-process run from the recipe written under tmp_path, so a story exercises recipe-relative asset resolution, not a patched global."""
+    files_dir = tmp_path / "totchef_files"
     files_dir.mkdir()
-    monkeypatch.setattr(harness, "FILES_DIR", files_dir)
     return files_dir
+
+
+@pytest.fixture
+def custom_cooks(tmp_path: Path) -> Path:
+    """The recipe's sibling custom-cooks dir (totchef_cooks/), populated by the test — scanned by the real in-process run for loose `*_cook.py` plugins beside the recipe."""
+    cooks_dir = tmp_path / "totchef_cooks"
+    cooks_dir.mkdir()
+    return cooks_dir
+
+
+@pytest.fixture
+def chezmoi_cook(custom_cooks: Path) -> Path:
+    """Drop the externalized chezmoi cook into the recipe's totchef_cooks/, so §11 drives the real cook the way it now ships — as a discovered custom cook, not a built-in."""
+    target = custom_cooks / "chezmoi_cook.py"
+    target.write_text(CHEZMOI_COOK)
+    return target
+
+
+@pytest.fixture
+def chezmoi_repo(tmp_path: Path) -> Path:
+    """A recipe repo (a recognized recipe name beside a totchef_cooks/chezmoi_cook.py) to cd into — for listing the discovered chezmoi cook through plain cwd resolution, without the in-process recipe harness."""
+    repo = tmp_path / "chezmoi-repo"
+    cooks = repo / "totchef_cooks"
+    cooks.mkdir(parents=True)
+    (repo / "totchef_recipe.toml").write_text("")
+    (cooks / "chezmoi_cook.py").write_text(CHEZMOI_COOK)
+    return repo
 
 
 @pytest.fixture

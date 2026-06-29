@@ -37,7 +37,6 @@ conf = "totchef.cooks.conf_cook:ConfCook"
 usr_local_bin = "totchef.cooks.usr_local_bin_root_cook:UsrLocalBinCook"
 usr_local_sbin = "totchef.cooks.usr_local_sbin_root_cook:UsrLocalSbinCook"
 local_bin = "totchef.cooks.local_bin_cook:LocalBinCook"
-chezmoi = "totchef.cooks.chezmoi_cook:ChezmoiCook"
 bash = "totchef.cooks.bash_cook:BashCook"
 apt_repo = "totchef.cooks.apt_repo_root_cook:AptRepoCook"
 apt_pkg = "totchef.cooks.apt_pkg_root_cook:AptPkgCook"
@@ -53,9 +52,9 @@ dev = [
     "tomli-w>=1.1",
 ]
 lint = ["ruff>=0.11", "rumdl>=0.1.84", "vulture>=2.14"]
-# psutil/websockets are not library deps — they back the standalone files/ctop.py script, which
-# carries its own inline `# dependencies` and runs via `uv run --script`. They live here only so
-# pyrefly can resolve ctop.py's imports; types-psutil supplies psutil's stubs.
+# psutil/websockets are not library deps — they back the standalone examples/totchef_files/ctop.py
+# script, which carries its own inline `# dependencies` and runs via `uv run --script`. They live
+# here only so pyrefly can resolve ctop.py's imports; types-psutil supplies psutil's stubs.
 typecheck = ["pyrefly>=1.0.0", "psutil>=7.2.2", "websockets>=14", "types-psutil>=7.2.2.20260518"]
 
 [build-system]

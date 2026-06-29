@@ -177,21 +177,38 @@ the box:
 | `[settings.<app>]` | merge an env block into a JSON file | `settings_json`, `settings_env` |
 
 A full, real-world recipe — a hybrid-GPU laptop with an eGPU, NVIDIA drivers, and
-browser tuning — lives in [`examples/recipe.toml`](examples/recipe.toml).
+browser tuning — lives in [`examples/totchef_recipe.toml`](examples/totchef_recipe.toml).
 
 ---
+
+## A recipe repo
+
+A recipe carries its assets and custom cooks beside it, all resolved relative to the recipe:
+
+```text
+totchef_recipe.toml   the recipe
+totchef_files/        assets a [file]/[local_bin]/... entry installs via `source`
+totchef_cooks/        loose <section>_cook.py plugins (highly custom cooks, e.g. chezmoi)
+```
+
+(Each also accepts the `totchef.toml` / `totchef-recipe.toml` and `totchef-files` / `totchef-cooks` spellings.)
 
 ## Where `totchef` looks for the recipe
 
 In precedence order:
 
-1. `--recipe PATH` (or `-r PATH`)
-2. `$TOTCHEF_RECIPE`
-3. `recipe.toml` in the current directory, then walking up to `/` (project-local)
-4. `~/.config/totchef/recipe.toml` (per-user)
-5. `/etc/totchef/recipe.toml` (system-wide)
+1. `--recipe PATH` (or `-r PATH`) — a recipe file, or a repo directory holding one
+2. a recognized recipe name (`totchef.toml`, `totchef_recipe.toml`, `totchef-recipe.toml`) in the current directory, then walking up to `/`
+3. a recipe pinned by `totchef init` (saved to `~/.config/totchef/config.toml`)
 
 `totchef where` prints the path it would use, so you're never guessing.
+
+## Run `totchef` from anywhere
+
+`just build` freezes totchef into a single self-contained binary at `totchef_files/totchef`;
+the example recipe's `[file.totchef]` installs it to `~/.local/bin` and its `post_hook` runs
+`totchef init` to pin the recipe. After one `just build && just up`, `totchef up` works from
+any directory.
 
 ---
 
@@ -226,10 +243,11 @@ uv tool install totchef --with my-totchef-plugins
 
 ### A local cook (no packaging, instant)
 
-Drop a `<section>_cook.py` into `~/.config/totchef/cooks/`. It must define exactly
-one `CookBase` subclass; the filename (minus a `_cook`/`_root_cook` suffix) is the
-section it serves. A local cook **shadows** a built-in of the same name — handy for
-prototyping or overriding behaviour on one machine.
+Drop a `<section>_cook.py` into your recipe's `totchef_cooks/` (carried with the recipe) or
+into `~/.config/totchef/cooks/` (a per-machine hatch). It must define exactly one `CookBase`
+subclass; the filename (minus a `_cook`/`_root_cook` suffix) is the section it serves. A
+local cook **shadows** a built-in of the same name — this is how the example recipe ships
+`chezmoi`.
 
 ### The two cook shapes
 

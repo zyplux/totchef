@@ -1,4 +1,4 @@
-"""Resolve a recipe section to its cook class: built-in and third-party cooks register through the `totchef.cooks` entry-point group; loose `*_cook.py` files under the config dir are a no-packaging escape hatch that shadows them."""
+"""Resolve a recipe section to its cook class: built-in and third-party cooks register through the `totchef.cooks` entry-point group; loose `*_cook.py` files under the recipe's sibling totchef_cooks/ (the primary extension point) or the user config dir (a prototyping hatch) shadow them, so a recipe repo carries its own highly custom cooks."""
 
 import importlib.util
 import os
@@ -13,9 +13,18 @@ from totchef.cook_base import CookBase
 COOK_GROUP = "totchef.cooks"
 COOK_SUFFIXES = ("_root_cook", "_cook")
 
+_recipe_cooks_dir: Path | None = None
+
+
+def set_recipe_cooks_dir(path: Path | None) -> None:
+    """Pin the recipe's sibling custom-cooks dir (totchef_cooks/) so its loose `*_cook.py` plugins resolve alongside the built-ins; None clears it (between tests). Clears the registry cache so the change takes effect."""
+    global _recipe_cooks_dir
+    _recipe_cooks_dir = path
+    cook_registry.cache_clear()
+
 
 def config_cooks_dir() -> Path:
-    """The escape-hatch directory scanned for loose `<section>_cook.py` plugins, honoring XDG_CONFIG_HOME."""
+    """The user config dir scanned for loose `<section>_cook.py` plugins, honoring XDG_CONFIG_HOME — a prototyping hatch beside the recipe-relative totchef_cooks/."""
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "totchef" / "cooks"
 
@@ -61,10 +70,9 @@ def _load_file_cook(path: Path) -> type[CookBase]:
     return classes[0]
 
 
-def _config_dir_cooks() -> dict[str, CookEntry]:
+def _dir_cooks(cooks_dir: Path | None) -> dict[str, CookEntry]:
     cooks: dict[str, CookEntry] = {}
-    cooks_dir = config_cooks_dir()
-    if not cooks_dir.is_dir():
+    if cooks_dir is None or not cooks_dir.is_dir():
         return cooks
     for path in sorted(cooks_dir.glob("*_cook.py")):
         section = next((path.stem[: -len(suffix)] for suffix in COOK_SUFFIXES if path.stem.endswith(suffix)), path.stem)
@@ -74,8 +82,8 @@ def _config_dir_cooks() -> dict[str, CookEntry]:
 
 @cache
 def cook_registry() -> dict[str, CookEntry]:
-    """Every available cook keyed by section — entry points first, then config-dir cooks shadowing them so a local file can override a built-in for prototyping."""
-    return {**_entry_point_cooks(), **_config_dir_cooks()}
+    """Every available cook keyed by section — entry points first, then the user config dir, then the recipe's totchef_cooks/ shadowing both, so a recipe-local cook (or a prototype) overrides a built-in."""
+    return {**_entry_point_cooks(), **_dir_cooks(config_cooks_dir()), **_dir_cooks(_recipe_cooks_dir)}
 
 
 def load_cook_class(section: str) -> type[CookBase]:

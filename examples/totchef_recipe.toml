@@ -188,6 +188,12 @@ repo = "https://github.com/realSergiy/dotfiles.git"
 source_dir = "~/dotfiles"
 timer_min = 60
 
+[file.totchef]
+path = "~/.local/bin/totchef"
+mode = "0755"
+source = "totchef"
+post_hook = 'totchef init "$HOME/Documents/proj/ProjHome/totchef/examples/totchef_recipe.toml"'
+
 [local_bin.ctop]
 
 [file.grub_deep_sleep]

@@ -1,4 +1,4 @@
-"""StateCook for [file.<name>] — install a file with exact content (inline `content`, a bundled `source` under totchef/files/, or with neither set the bundled file named after the entry), diffed by content hash so a `post_hook` fires only on change. `path` expands `~` for per-user installs. Privilege-agnostic; recipe.toml grants root per entry."""
+"""StateCook for [file.<name>] — install a file with exact content (inline `content`, a bundled `source` from the recipe's sibling totchef_files/, or with neither set the bundled file named after the entry), diffed by content hash so a `post_hook` fires only on change. `path` expands `~` for per-user installs. Privilege-agnostic; recipe.toml grants root per entry."""
 
 from pathlib import Path
 
@@ -32,7 +32,7 @@ class FileCook(FileStateCook[FileEntry]):
     def _render(self, name: str) -> bytes:
         entry = self.entries[name]
         if entry.source is not None:
-            return (harness.FILES_DIR / entry.source).read_bytes()
+            return (harness.files_dir() / entry.source).read_bytes()
         return (entry.content or "").encode()
 
     def _parse_mode(self, name: str) -> int:

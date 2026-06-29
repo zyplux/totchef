@@ -11,13 +11,12 @@ import typer
 from loguru import logger
 from toon_format import encode
 
-from totchef import __version__
+from totchef import __version__, harness, registry
 from totchef.cook_base import CookResult
 from totchef.cook_runner import format_duration, run_recipe
 from totchef.harness import SOFT_FAIL_EXIT
 from totchef.logs import SHARED_LOG_ENV, drain_logs, inline_mode, set_terminal_echo, start_logging, write_log
-from totchef.recipe import RECIPE_ENV, find_recipe
-from totchef.registry import cook_registry
+from totchef.recipe import RECIPE_ENV, find_cooks_dir, find_files_dir, find_recipe, resolve_explicit, save_recipe, try_find_recipe
 from totchef.removal_watch import append_removal_notices
 from totchef.schema_lint import validate
 from totchef.terminal import show_table
@@ -31,8 +30,16 @@ app = typer.Typer(
 
 RecipeOption = Annotated[
     Path | None,
-    typer.Option("--recipe", "-r", help="Recipe path (default: search cwd upward, then ~/.config/totchef, then /etc/totchef)."),
+    typer.Option("--recipe", "-r", help="Recipe file or repo dir (default: a recognized name from the cwd up, then a recipe pinned by `totchef init`)."),
 ]
+
+
+def prepare(explicit: Path | None) -> Path:
+    """Resolve the recipe and pin its sibling assets dir (totchef_files/) and custom-cooks dir (totchef_cooks/), so cooks read bundled sources and the registry sees recipe-local cooks before validation and the run."""
+    path = find_recipe(explicit)
+    harness.set_files_dir(find_files_dir(path))
+    registry.set_recipe_cooks_dir(find_cooks_dir(path))
+    return path
 
 
 def ensure_root(recipe_path: Path) -> None:
@@ -156,19 +163,19 @@ def apply(recipe_path: Path, dry_run: bool) -> None:
 @app.command()
 def up(recipe: RecipeOption = None) -> None:
     """Apply the recipe, converging the system to it (escalates to root)."""
-    apply(find_recipe(recipe), dry_run=False)
+    apply(prepare(recipe), dry_run=False)
 
 
 @app.command()
 def plan(recipe: RecipeOption = None) -> None:
     """Dry-run: probe and print what would change. No root, no changes."""
-    apply(find_recipe(recipe), dry_run=True)
+    apply(prepare(recipe), dry_run=True)
 
 
 @app.command()
 def lint(recipe: RecipeOption = None) -> None:
     """Validate the recipe against the cook schemas and exit. No root, no changes."""
-    path = find_recipe(recipe)
+    path = prepare(recipe)
     validate(load_recipe(path))
     typer.echo(f"{path}: valid")
 
@@ -179,6 +186,23 @@ def where(recipe: RecipeOption = None) -> None:
     typer.echo(find_recipe(recipe))
 
 
+@app.command()
+def init(
+    recipe: Annotated[Path | None, typer.Argument(help="Recipe file or repo directory to pin; omit to use the one discovered here.")] = None,
+) -> None:
+    """Pin a recipe so `totchef up` finds it from anywhere — saves its path to ~/.config/totchef/config.toml."""
+    if recipe is not None:
+        path = resolve_explicit(recipe)
+    else:
+        path = try_find_recipe()
+        if path is None:
+            raise SystemExit("ERROR: no recipe found here to pin; pass a path: totchef init PATH")
+        if not typer.confirm(f"Pin {path} as your default recipe?", default=True):
+            raise typer.Exit()
+    config = save_recipe(path)
+    typer.echo(f"Pinned {path} ({config})")
+
+
 def version_callback(value: bool) -> None:
     if value:
         typer.echo(f"totchef {__version__}")
@@ -186,10 +210,13 @@ def version_callback(value: bool) -> None:
 
 
 def list_cooks_callback(value: bool) -> None:
-    """Print every resolvable cook — section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) — as TOON, then exit."""
+    """Print every resolvable cook — section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) — as TOON, then exit. Best-effort resolves a recipe so its totchef_cooks/ plugins are listed too."""
     if value:
+        if (path := try_find_recipe()) is not None:
+            registry.set_recipe_cooks_dir(find_cooks_dir(path))
         rows = [
-            {"section": section, "scope": "root" if entry.needs_root else "user", "origin": entry.origin} for section, entry in sorted(cook_registry().items())
+            {"section": section, "scope": "root" if entry.needs_root else "user", "origin": entry.origin}
+            for section, entry in sorted(registry.cook_registry().items())
         ]
         typer.echo(encode(rows))
         raise typer.Exit()

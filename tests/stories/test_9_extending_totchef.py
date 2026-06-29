@@ -120,6 +120,18 @@ def test_9_2_1_local_cook_file_is_picked_up_and_shadows_a_builtin(cli, home):
     cli.run("--list-cooks").assert_lists("bash", origin="local")  # the built-in `bash` is now shadowed
 
 
+def test_9_2_2_custom_cook_loads_from_totchef_cooks_beside_the_recipe(recipe, custom_cooks, terminal, totchef):
+    """A loose `<section>_cook.py` in the recipe's sibling totchef_cooks/ is discovered and serves its section, so a recipe repo carries highly custom cooks beside it."""
+    (custom_cooks / "switch_cook.py").write_text(PROBE_ONLY_COOK)
+    recipe.declares("switch", "drifted", current="off", desired="on")
+
+    report = totchef.up()
+
+    report.assert_succeeded()
+    report.assert_shows("switch.drifted", "applied")  # discovered from totchef_cooks/, then applied
+    terminal.expect_ran("flip-switch drifted")
+
+
 # 8.3 Choose the right cook shape for my domain
 
 

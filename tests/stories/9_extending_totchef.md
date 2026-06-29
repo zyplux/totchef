@@ -13,8 +13,9 @@ third-party cooks register the same way, and `totchef cooks` shows the origin.
 
 ## 9.2 Prototype a cook without packaging it
 
-> As a cook author, I want to drop a single Python file into my config dir and have
-> totchef pick it up, so that I can prototype a domain without building a package.
+> As a cook author, I want to drop a single Python file beside my recipe (or into my config
+> dir) and have totchef pick it up, so that I can carry a highly custom cook with my recipe —
+> or prototype a domain — without building a package.
 
 ### 9.2.1 local cook file is picked up and shadows a builtin
 
@@ -22,6 +23,13 @@ A loose `~/.config/totchef/cooks/<section>_cook.py` (containing exactly one
 `CookBase` subclass; the `_cook`/`_root_cook` suffix is stripped to derive the
 section) is loaded as a local cook and **shadows** a built-in of the same name — an
 escape hatch for overriding or prototyping.
+
+### 9.2.2 custom cook loads from totchef cooks beside the recipe
+
+A loose `<section>_cook.py` in the recipe's sibling `totchef_cooks/` is discovered and serves
+its section — the primary way a recipe repo carries highly custom cooks (e.g. `chezmoi`)
+without packaging them. It takes precedence over a built-in or config-dir cook of the same
+name.
 
 ## 9.3 Choose the right cook shape for my domain
 

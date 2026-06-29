@@ -69,7 +69,7 @@ pin_priority = 1001
 ### 5.2.1 file writes from content or bundled source with mode
 
 `[file.<name>]` writes a file to `path` from either inline `content` or a
-`source` asset bundled with totchef (under `totchef/files/`), with a given `mode`.
+`source` asset beside the recipe (in `totchef_files/`), with a given `mode`.
 Setting both is rejected.
 
 ### 5.2.2 file diffed by content hash

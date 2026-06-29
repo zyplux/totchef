@@ -45,8 +45,9 @@ setup runs again.
 
 ### 11.2.1 chezmoi is user scoped not root
 
-`[chezmoi]` is a user-scoped cook: it manages the operator's `$HOME`, so it lists with `user`
-scope and never escalates to root.
+`[chezmoi]` ships as a custom cook discovered from the recipe's `totchef_cooks/` (not a
+built-in — it's the canonical highly-custom cook): it manages the operator's `$HOME`, so it
+lists with `user` scope (origin `local`) and never escalates to root.
 
 ### 11.2.2 chezmoi without the binary fails clearly
 

@@ -83,8 +83,8 @@ class Cli:
     def __init__(self) -> None:
         self._runner = CliRunner()
 
-    def run(self, *args: str) -> CliResult:
-        outcome = self._runner.invoke(app, list(args))
+    def run(self, *args: str, stdin: str | None = None) -> CliResult:
+        outcome = self._runner.invoke(app, list(args), input=stdin)
         return CliResult(outcome.stdout, outcome.exit_code, stderr=outcome.stderr)
 
 

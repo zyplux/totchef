@@ -11,18 +11,29 @@ from urllib.request import Request, urlopen
 
 from loguru import logger
 
-PACKAGE_DIR = Path(__file__).resolve().parent
-FILES_DIR = PACKAGE_DIR / "files"
+_files_dir: Path | None = None
+
+
+def set_files_dir(path: Path | None) -> None:
+    """Pin the recipe's sibling assets dir (totchef_files/) for this run, before any cook reads a bundled `source`. None clears it (between tests)."""
+    global _files_dir
+    _files_dir = path
+
+
+def files_dir() -> Path:
+    """The recipe's sibling assets dir, resolved from the recipe before cooks run; raises if a bundled `source` is referenced before a recipe pinned it (a wiring bug, never a recipe error)."""
+    if _files_dir is None:
+        raise RuntimeError("totchef_files dir not resolved — a bundled `source` was referenced before the recipe was loaded")
+    return _files_dir
 
 
 def resolve_bundled_source(entry_name: str | None) -> str:
-    """The bundled file an omitted `source` defaults to: the unique file under totchef/files/ whose stem equals the entry name; zero or several matches raise, asking for an explicit `source`."""
-    candidates = sorted(path.name for path in FILES_DIR.iterdir() if path.is_file() and path.stem == entry_name)
+    """The bundled file an omitted `source` defaults to: the unique file under the recipe's totchef_files/ whose stem equals the entry name; zero or several matches raise, asking for an explicit `source`."""
+    base = files_dir()
+    candidates = sorted(path.name for path in base.iterdir() if path.is_file() and path.stem == entry_name) if base.is_dir() else []
     if len(candidates) == 1:
         return candidates[0]
-    problem = (
-        f"several bundled files match '{entry_name}': {', '.join(candidates)}" if candidates else f"no bundled file named '{entry_name}.*' under totchef/files/"
-    )
+    problem = f"several bundled files match '{entry_name}': {', '.join(candidates)}" if candidates else f"no bundled file named '{entry_name}.*' under {base}"
     raise ValueError(f"{problem} — set `source` explicitly")
 
 

@@ -65,8 +65,8 @@ so the operator sees what is about to happen before it happens.
 
 ## 1.3 Find out which recipe will be used
 
-> As an operator, I want to know which `recipe.toml` totchef will pick up from my
-> current directory, so that I'm never surprised by the wrong file being applied.
+> As an operator, I want to know which recipe totchef will pick up — and to pin one so it
+> runs from anywhere — so that I'm never surprised by the wrong file being applied.
 
 ### 1.3.1 where prints resolved recipe path
 
@@ -74,15 +74,31 @@ so the operator sees what is about to happen before it happens.
 
 ### 1.3.2 recipe discovery follows fixed precedence
 
-Recipe discovery follows a fixed precedence: an explicit `--recipe`/`-r PATH`,
-then the `$TOTCHEF_RECIPE` environment variable, then walking up from the current
-directory looking for `recipe.toml` (project-local), then
-`~/.config/totchef/recipe.toml`, then `/etc/totchef/recipe.toml`.
+Recipe discovery follows a fixed precedence: an explicit `--recipe`/`-r PATH` (a file or a
+repo directory), then a recognized recipe filename (`totchef.toml`, `totchef_recipe.toml`,
+or `totchef-recipe.toml`) found walking up from the current directory, then a recipe pinned
+by `totchef init`.
 
 ### 1.3.3 no recipe found lists searched locations
 
 When no recipe is found, the error lists every location that was searched, so
 the operator knows exactly where to put one.
+
+### 1.3.4 recipe flag accepts a directory
+
+`--recipe DIR` accepts a repo directory, resolving to a recognized recipe filename inside
+it — so the operator can point at a config/dotfiles repo without naming the file.
+
+### 1.3.5 init pins a default recipe
+
+`totchef init PATH` pins a recipe (a file, or a repo directory holding one) in the user
+config (`~/.config/totchef/config.toml`), so a later `totchef up` with nothing nearer
+resolves to it — letting `totchef up` run from anywhere.
+
+### 1.3.6 init offers the discovered recipe
+
+Run with no path, `totchef init` offers the recipe discovered in the current directory and
+pins it once the operator confirms.
 
 ## 1.4 Discover available cooks
 

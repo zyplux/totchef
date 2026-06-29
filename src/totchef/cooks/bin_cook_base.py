@@ -22,7 +22,7 @@ def find_embedded_version(file_text: str) -> str | None:
 def find_contract_problems(command_path: Path) -> list[str]:
     """The static checks a PATH-installed command must pass — embed a `__version__` marker, offer `--version` and `--help` — collected as readable problems (empty == compliant), read off the file's bytes without executing it."""
     if not command_path.is_file():
-        return [f"bundled command {command_path.name} not found under totchef/files/"]
+        return [f"bundled command {command_path.name} not found under {command_path.parent}"]
     file_text = command_path.read_text(errors="replace")
     problems: list[str] = []
     if find_embedded_version(file_text) is None:
@@ -46,7 +46,7 @@ class BinEntry(EntrySpec):
 
     @model_validator(mode="after")
     def _command_honors_contract(self) -> "BinEntry":
-        if problems := find_contract_problems(harness.FILES_DIR / self.source):
+        if problems := find_contract_problems(harness.files_dir() / self.source):
             raise ValueError("; ".join(problems))
         return self
 
@@ -70,10 +70,10 @@ class BinCommandCook(StateCook[BinEntry]):
     def get_desired_state(self) -> dict[str, str]:
         states: dict[str, str] = {}
         for name, entry in self.entries.items():
-            states[name] = find_embedded_version((harness.FILES_DIR / entry.source).read_text(errors="replace")) or "unversioned"
+            states[name] = find_embedded_version((harness.files_dir() / entry.source).read_text(errors="replace")) or "unversioned"
         return states
 
     def apply_resource(self, name: str) -> StateChangeOutcome:
-        command_bytes = (harness.FILES_DIR / self.entries[name].source).read_bytes()
+        command_bytes = (harness.files_dir() / self.entries[name].source).read_bytes()
         changed = harness.write_if_changed(self._target_path(name), command_bytes, EXECUTABLE_MODE, note=name)
         return StateChangeOutcome(changed=changed)

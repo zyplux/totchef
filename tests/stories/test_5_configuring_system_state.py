@@ -124,20 +124,21 @@ def test_5_1_6_pin_priority_writes_origin_pin_into_preferences(recipe, http, tot
 # 5.2 Install files with exact content
 
 
-def test_5_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, scenario, chef, totchef, tmp_path):
-    """`[file.<name>]` writes from inline content or a bundled source asset with a mode; setting both is rejected."""
+def test_5_2_1_file_writes_from_content_or_bundled_source_with_mode(recipe, scenario, chef, bundled_files, totchef, tmp_path):
+    """`[file.<name>]` writes from inline content or a bundled source asset beside the recipe with a mode; setting both is rejected."""
+    (bundled_files / "asset.txt").write_text("bundled-bytes\n")
     inline = tmp_path / "drop.conf"
-    bundled = tmp_path / "write-if-changed.py"
+    copied = tmp_path / "copied.txt"
     recipe.declares("file", "drop", path=str(inline), content="X=1\n", mode="0600")
-    recipe.declares("file", "script", path=str(bundled), source="write-if-changed.py")
+    recipe.declares("file", "script", path=str(copied), source="asset.txt")
 
     totchef.up().assert_succeeded()
 
     assert inline.read_text() == "X=1\n"
     assert (inline.stat().st_mode & 0o777) == 0o600
-    assert bundled.read_bytes()  # copied verbatim from the bundled asset
+    assert copied.read_text() == "bundled-bytes\n"  # copied verbatim from the bundled asset
 
-    both = scenario().declares("file", "x", path=str(inline), content="a", source="write-if-changed.py")
+    both = scenario().declares("file", "x", path=str(inline), content="a", source="asset.txt")
     chef(both).lint().assert_rejected()  # content and source together are rejected
 
 
@@ -263,8 +264,11 @@ def test_5_3_4_bash_is_privilege_agnostic_root_per_entry(recipe, totchef, cli):
 # 5.4 Install versioned commands onto the PATH
 
 
-def test_5_4_1_usr_local_bin_and_local_bin_install_command_named_after_source_stem(recipe, home, usr_local_bin_dir, totchef):
+def test_5_4_1_usr_local_bin_and_local_bin_install_command_named_after_source_stem(recipe, home, usr_local_bin_dir, bundled_files, totchef):
     """`[usr_local_bin.<name>]` installs a bundled script to /usr/local/bin and `[local_bin.<name>]` to ~/.local/bin — mode 0755, command named after the source stem, only `source` declared."""
+    command = '#!/bin/bash\n__version__="1.0.0"\ncase "$1" in --version) echo "$__version__";; --help) echo usage;; esac\n'
+    (bundled_files / "write-if-changed.py").write_text(command)
+    (bundled_files / "ctop.py").write_text(command)
     recipe.declares("usr_local_bin", "write_if_changed", source="write-if-changed.py")
     recipe.declares("local_bin", "ctop", source="ctop.py")
 

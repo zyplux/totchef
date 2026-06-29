@@ -154,22 +154,26 @@ def test_1_3_1_where_prints_resolved_recipe_path(cli, tmp_path):
 
 
 def test_1_3_2_recipe_discovery_follows_fixed_precedence(cli, tmp_path, monkeypatch):
-    """Precedence: --recipe/-r, $TOTCHEF_RECIPE, walk up for recipe.toml, ~/.config/totchef/recipe.toml, /etc/totchef/recipe.toml."""
+    """Precedence: --recipe/-r (file or dir), then a recognized recipe name walking up from the cwd, then a recipe pinned by `totchef init`."""
     explicit = tmp_path / "explicit.toml"
     explicit.write_text("")
     cli.run("where", "--recipe", str(explicit)).assert_prints(str(explicit))  # an explicit flag wins
 
-    env_recipe = tmp_path / "env.toml"
-    env_recipe.write_text("")
-    monkeypatch.setenv("TOTCHEF_RECIPE", str(env_recipe))
-    cli.run("where").assert_prints(str(env_recipe))  # then $TOTCHEF_RECIPE
-    monkeypatch.delenv("TOTCHEF_RECIPE")
-
     project = tmp_path / "project"
     (project / "sub").mkdir(parents=True)
-    (project / "recipe.toml").write_text("")
+    (project / "totchef_recipe.toml").write_text("")
     monkeypatch.chdir(project / "sub")
-    cli.run("where").assert_prints(str(project / "recipe.toml"))  # then walk up from cwd
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
+    cli.run("where").assert_prints(str(project / "totchef_recipe.toml"))  # then a recognized name, walking up from cwd
+
+    pinned = tmp_path / "pinned" / "totchef.toml"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text("")
+    nowhere = tmp_path / "nowhere"
+    nowhere.mkdir()
+    monkeypatch.chdir(nowhere)
+    cli.run("init", str(pinned)).assert_succeeded()
+    cli.run("where").assert_prints(str(pinned))  # then the recipe pinned by `totchef init`, when nothing nearer is found
 
 
 def test_1_3_3_no_recipe_found_lists_searched_locations(cli, tmp_path, monkeypatch):
@@ -186,19 +190,60 @@ def test_1_3_3_no_recipe_found_lists_searched_locations(cli, tmp_path, monkeypat
     missing.assert_prints("recipe.toml")
 
 
+def test_1_3_4_recipe_flag_accepts_a_directory(cli, tmp_path):
+    """`--recipe DIR` resolves to a recognized recipe filename inside that directory."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "totchef_recipe.toml").write_text("")
+
+    cli.run("where", "--recipe", str(repo)).assert_prints(str(repo / "totchef_recipe.toml"))
+
+
+def test_1_3_5_init_pins_a_default_recipe(cli, home, tmp_path, monkeypatch):
+    """`totchef init PATH` saves the recipe location so a later run with nothing nearer resolves to it."""
+    recipe_path = tmp_path / "dots" / "totchef_recipe.toml"
+    recipe_path.parent.mkdir(parents=True)
+    recipe_path.write_text("")
+
+    cli.run("init", str(recipe_path)).assert_succeeded()
+
+    assert str(recipe_path) in (home / ".config/totchef/config.toml").read_text()  # pinned in the user config
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
+    cli.run("where").assert_prints(str(recipe_path))  # the pinned recipe is the fallback
+
+
+def test_1_3_6_init_offers_the_discovered_recipe(cli, home, tmp_path, monkeypatch):
+    """Run with no path, `totchef init` offers the recipe discovered in the current directory and pins it on confirmation."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    recipe_path = repo / "totchef.toml"
+    recipe_path.write_text("")
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("TOTCHEF_RECIPE", raising=False)
+
+    confirmed = cli.run("init", stdin="y\n")  # answer the prompt
+
+    confirmed.assert_succeeded()
+    confirmed.assert_prints(str(recipe_path))  # the prompt named the discovered recipe
+    assert str(recipe_path) in (home / ".config/totchef/config.toml").read_text()  # and it was pinned
+
+
 # 1.4 Discover available cooks
 
 
 def test_1_4_1_cooks_lists_section_scope_and_origin(cli):
     """`totchef --list-cooks` prints section, scope (root/user), and origin (built-in / plugin:<dist> / local:<path>) for every resolvable cook."""
     cli.run("--list-cooks").assert_output("""
-        [17]{section,scope,origin}:
+        [16]{section,scope,origin}:
           apt_pkg,root,built-in
           apt_repo,root,built-in
           bash,user,built-in
           bun,user,built-in
           cargo,user,built-in
-          chezmoi,user,built-in
           chromium_flags,user,built-in
           conf,user,built-in
           desktop,user,built-in
