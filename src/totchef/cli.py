@@ -117,7 +117,7 @@ def apply(recipe_path: Path, dry_run: bool) -> None:
 
     if not dry_run and not inline_mode():
         ensure_root(recipe_path)
-    start_logging(echo_to_terminal=not dry_run)
+    log_file = start_logging(echo_to_terminal=not dry_run)
     start = time.monotonic()
 
     try:
@@ -136,11 +136,11 @@ def apply(recipe_path: Path, dry_run: bool) -> None:
             if result.status == "hard_fail" and result.message:
                 logger.error(f"[{result.cook}] {result.message}")
         if hard:
-            logger.error(f"=== Hard failures: {', '.join(hard)} — apply aborted ===")
+            logger.error(f"=== Hard failures: {', '.join(hard)} — apply aborted; full log: {log_file} ===")
             drain_logs()
             raise typer.Exit(1)
         if soft:
-            logger.warning(f"=== Soft failures: {', '.join(soft)} (scroll back) ===")
+            logger.warning(f"=== Soft failures: {', '.join(soft)} (scroll back; full log: {log_file}) ===")
             drain_logs()
             raise typer.Exit(SOFT_FAIL_EXIT)
         drain_logs()

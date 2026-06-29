@@ -86,6 +86,13 @@ region.
 A dry run shows only the plan table on the terminal while still recording every
 line to the log file.
 
+### 8.3.4 a failed run names its log file
+
+When a run ends in failure, the final summary line names the run's log file path —
+both the hard-failure `apply aborted` line and the soft-failure summary — so an
+operator who saw only the report knows exactly which file to open to read the
+captured error.
+
 ## 8.4 See follow-up actions after the report
 
 > As an operator, I want any "do this next" notices — restart an app, reboot

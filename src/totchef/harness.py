@@ -46,6 +46,9 @@ def become_user() -> None:
     os.environ["USER"] = sudo_user
     os.environ["LOGNAME"] = sudo_user
     os.environ["XDG_CACHE_HOME"] = f"{home}/.cache"
+    # The user's runtime dir holds the session D-Bus; point at it so `systemctl --user`
+    # (e.g. the chezmoi capture timer) can reach the bus instead of failing to connect.
+    os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{pw.pw_uid}"
     # Toolchains install into these before they are on PATH; prepend so a fresh
     # bootstrap can find what an earlier cook just dropped here.
     bootstrap = ":".join(str(d) for d in bootstrap_bin_dirs())

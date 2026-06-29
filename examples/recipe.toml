@@ -178,21 +178,15 @@ update_guard = "command -v herdr >/dev/null || exit 0; herdr server stop || true
 [url.agy]
 url = "antigravity.google/cli/install.sh"
 
-# get.chezmoi.io/lb drops the binary into ~/.local/bin (the /lb endpoint presets BINDIR);
-# `chezmoi upgrade` self-replaces from GitHub releases on a later run.
 [url.chezmoi]
 url = "get.chezmoi.io/lb"
 update_action = ["upgrade"]
 
-# Clone the dotfiles repo into ~/dotfiles, persist that sourceDir into chezmoi's own
-# config so bare `chezmoi` commands agree, then apply it into $HOME. Idempotent: a
-# re-run only acts when the source is missing or `chezmoi verify` reports drift.
-# Needs git (apt_pkg) for chezmoi's pull path and the binary from [url.chezmoi].
 [chezmoi]
 depends_on = ["apt_pkg", "url.chezmoi"]
 repo = "https://github.com/realSergiy/dotfiles.git"
 source_dir = "~/dotfiles"
-apply = true
+timer_min = 60
 
 [local_bin.ctop]
 

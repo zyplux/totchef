@@ -21,10 +21,17 @@ def test_every_header_has_a_story_test():
     assert not orphans, "### story-doc headers with no matching story test: " + ", ".join(orphans)
 
 
+def word_sequence(title: str) -> list[str]:
+    """A title's comparable words. A header's prose may join words with a hyphen ("non-interactive") that the test name can only spell as separate underscore tokens ("non interactive"), so treat a hyphen as the same word break — without it the two spellings read as drift."""
+    return title.replace("-", " ").split()
+
+
 def test_header_titles_match_test_names():
     tests = collect_story_tests()
     headers = collect_headers()
-    drifted = {sid: (headers[sid].title, tests[sid].title) for sid in set(tests) & set(headers) if headers[sid].title != tests[sid].title}
+    drifted = {
+        sid: (headers[sid].title, tests[sid].title) for sid in set(tests) & set(headers) if word_sequence(headers[sid].title) != word_sequence(tests[sid].title)
+    }
     assert not drifted, f"header title vs test-name drift (id: header, test): {drifted}"
 
 
