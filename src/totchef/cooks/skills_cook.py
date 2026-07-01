@@ -31,7 +31,7 @@ def skills_dir() -> Path:
 def lockfile_skills() -> dict[str, dict]:
     try:
         payload = json.loads(lockfile_path().read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     return payload.get("skills", {})
 
