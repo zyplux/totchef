@@ -166,6 +166,10 @@ depends_on = ["url.bun"]
 packages = ["@earendil-works/pi-coding-agent", "@zyplux/cz"]
 post_hook = 'mkdir -p "$HOME/.local/bin" && ln -sf "${BUN_INSTALL:-$HOME/.bun}/bin/pi" "$HOME/.local/bin/pi"'
 
+[skills]
+depends_on = ["url.bun"]
+repos = ["zyplux/zyp-skills"]
+
 [url.claude]
 url = "claude.ai/install.sh"
 update_action = ["update"]
