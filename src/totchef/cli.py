@@ -125,7 +125,10 @@ def apply(recipe_path: Path, dry_run: bool) -> None:
 
     if not dry_run and not inline_mode():
         ensure_root(recipe_path)
-    log_file = start_logging(echo_to_terminal=not dry_run)
+    log_file = start_logging()
+    logger.info(f"=== totchef {__version__} ===")
+    drain_logs()
+    set_terminal_echo(not dry_run)
     start = time.monotonic()
 
     try:

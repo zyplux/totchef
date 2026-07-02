@@ -134,7 +134,7 @@ def run_versioned(cook: VersionedCook, section: str, dry_run: bool) -> CookResul
 
     installed_after = cook.list_installed()
     rows = []
-    for name in requested:
+    for name in cook.list_reportable(requested, installed_after):
         before = installed_before.get(name)
         after = installed_after.get(name)
         if before is None and after is not None:

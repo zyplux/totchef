@@ -1,12 +1,24 @@
+# JavaScript / bun
+node_modules/
+dist/
+.tsbuild/
+*.tsbuildinfo
+.eslintcache
+coverage/
+
+# Python / uv
 .venv/
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.rumdl_cache/
 logs/
 .coverage
 .coverage.*
 coverage.json
 htmlcov/
 .claude/settings.local.json
-reference_clones
+reference_clones/
 
 # `just build` artifacts: the PyInstaller workdir and the generated single-file totchef binary.
 /build/

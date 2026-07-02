@@ -397,9 +397,7 @@
     "type": "switch",
     "default": "Disabled",
     "description": "Allows you to use a self-hosted server with Brave Sync. You can learn more about the server implementation in the repository link mentioned below. Note: Only HTTPS URLs are supported by default. HTTP URLs are only allowed for potentially trustworthy origins like localhost.Insecure URLs that don't meet these requirements will be ignoredin favor of the official Brave-hosted server",
-    "references": [
-      "https://github.com/brave/go-sync"
-    ]
+    "references": ["https://github.com/brave/go-sync"]
   },
   {
     "title": "Enable Adblock-Only Mode",
@@ -3220,9 +3218,7 @@
     "type": "feature",
     "default": "Disabled",
     "description": "Adds the \"preference\" create option to the Summarizer API. Allows the developer to choose between \"capability\", \"speed\", and \"auto\" to hint at the desired balance between performance and capability.",
-    "references": [
-      "https://chromestatus.com/feature/6309243756085248"
-    ]
+    "references": ["https://chromestatus.com/feature/6309243756085248"]
   },
   {
     "title": "Summarizer API for Gemini Nano",

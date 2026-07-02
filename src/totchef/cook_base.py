@@ -122,6 +122,10 @@ class VersionedCook(CookBase):
     def find_latest(self, names: list[str]) -> dict[str, str | None]:
         raise NotImplementedError
 
+    def list_reportable(self, requested: list[str], installed_after: dict[str, str]) -> list[str]:
+        """Row keys for the post-sync report — the requested names by default. A cook whose sync discovers finer-grained items than were requestable up front (skills inside a repo) overrides this to split a requested placeholder into what actually landed."""
+        return requested
+
     def sync(self, to_install: list[str], to_upgrade: list[str]) -> SyncOutcome:
         raise NotImplementedError
 
