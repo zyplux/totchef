@@ -83,8 +83,8 @@ region.
 
 ### 8.3.3 dry run shows only plan on terminal but logs everything
 
-A dry run shows only the plan table on the terminal while still recording every
-line to the log file.
+A dry run shows only the version banner (§8.3.5) and the plan table on the
+terminal while still recording every line to the log file.
 
 ### 8.3.4 a failed run names its log file
 
@@ -92,6 +92,13 @@ When a run ends in failure, the final summary line names the run's log file path
 both the hard-failure `apply aborted` line and the soft-failure summary — so an
 operator who saw only the report knows exactly which file to open to read the
 captured error.
+
+### 8.3.5 every run logs the totchef version up front
+
+Every `plan`/`up` logs `totchef <version>` as its first line and echoes it to
+the terminal ahead of any table — even on a dry run, whose other log lines stay
+off the terminal (§8.3.3). The version comes from the package metadata — the
+same single source of truth `--version` reports (§1.5).
 
 ## 8.4 See follow-up actions after the report
 

@@ -217,6 +217,15 @@ def test_8_3_4_a_failed_run_names_its_log_file(scenario, chef, terminal):
     report.assert_logged(".log")
 
 
+def test_8_3_5_every_run_logs_the_totchef_version_up_front(recipe, totchef, tmp_path, totchef_version):
+    """Every plan/up logs `totchef <version>` first, naming the exact build behind any log file or scrollback."""
+    recipe.declares("file", "f", path=str(tmp_path / "f"), content="X\n")
+
+    for run in (totchef.plan(), totchef.up()):
+        run.assert_logged(f"totchef {totchef_version}")
+        assert f"totchef {totchef_version}" in run.logs.splitlines()[0]
+
+
 # 8.4 See follow-up actions after the report
 
 

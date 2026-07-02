@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from assert_fixtures import HttpAssertions, TerminalAssertions
-from totchef import harness, registry, shell
+from totchef import __version__, harness, registry, shell
 from totchef import terminal as terminal_module
 from totchef.cooks import apt_repo_root_cook
 from totchef.cooks.usr_local_bin_root_cook import UsrLocalBinCook
@@ -264,13 +264,19 @@ def http(monkeypatch: pytest.MonkeyPatch) -> FakeHttp:
     return fake
 
 
+@pytest.fixture
+def totchef_version() -> str:
+    """The installed distribution's version — the value every run banner and `--version` must state."""
+    return __version__
+
+
 @pytest.fixture(autouse=True)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Redirect `$HOME` to a temp dir so `Path.home()` (and `~`) land there, isolating per-user cooks from the real home. Also scrub env vars holding an absolute path into the real home (e.g. `BUN_INSTALL`, and the `XDG_*_HOME` dirs that production code prefers over `$HOME`), which would otherwise leak past the `$HOME` redirect — CI runners set `XDG_CONFIG_HOME`, so the config-dir cook scan would miss test drop-ins without this."""
     home_dir = tmp_path / "home"
     home_dir.mkdir()
     monkeypatch.setenv("HOME", str(home_dir))
-    for leaked in ("BUN_INSTALL", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    for leaked in ("BUN_INSTALL", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
         monkeypatch.delenv(leaked, raising=False)
     return home_dir
 

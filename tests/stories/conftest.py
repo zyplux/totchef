@@ -17,6 +17,7 @@ from arrange_fixtures import (
     scenario,
     system,
     terminal,
+    totchef_version,
     usr_local_bin_dir,
     usr_local_sbin_dir,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "system",
     "terminal",
     "totchef",
+    "totchef_version",
     "usr_local_bin_dir",
     "usr_local_sbin_dir",
 ]
