@@ -338,7 +338,7 @@ def test_12_1_15_a_drifted_agent_entry_re_adds_to_restore_the_store_symlink(reci
     assert agent_entry.is_symlink()  # the copy is gone; the entry links into the store again
 
 
-def test_12_1_16_a_re_add_reports_a_newly_landed_skill_as_installed(recipe, terminal, totchef, system, home):
+def test_12_1_16_a_re_add_reports_a_newly_landed_skill_as_its_own_installed_row(recipe, terminal, totchef, system, home):
     """A skill that first appears during a re-add of an already-installed repo gets its own report row, not just the sync-log mention."""
     recipe.declares("skills", repos=["zyplux/zyp-skills"])
     system.has("bunx", "bun")
