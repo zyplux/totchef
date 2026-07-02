@@ -336,3 +336,27 @@ def test_12_1_15_a_drifted_agent_entry_re_adds_to_restore_the_store_symlink(reci
     totchef.up().assert_shows("skills.zyplux/zyp-skills/totchef", "unchanged")
     assert terminal.count("skills add zyplux/zyp-skills") == 2  # re-added to repair the drift
     assert agent_entry.is_symlink()  # the copy is gone; the entry links into the store again
+
+
+def test_12_1_16_a_re_add_reports_a_newly_landed_skill_as_installed(recipe, terminal, totchef, system, home):
+    """A skill that first appears during a re-add of an already-installed repo gets its own report row, not just the sync-log mention."""
+    recipe.declares("skills", repos=["zyplux/zyp-skills"])
+    system.has("bunx", "bun")
+    terminal.arrange(
+        "skills add zyplux/zyp-skills",
+        effect=_write_skills(home, ("totchef", "zyplux/zyp-skills", "aaaa1111bbbb2222cccc3333dddd4444eeee5555", "2026-01-01T00:00:00Z")),
+    )
+    totchef.up()
+
+    terminal.arrange(
+        "skills add zyplux/zyp-skills",
+        effect=_write_skills(
+            home,
+            ("totchef", "zyplux/zyp-skills", "bbbb2222cccc3333dddd4444eeee5555ffff6666", "2026-01-02T00:00:00Z"),
+            ("mermaid", "zyplux/zyp-skills", "cccc3333dddd4444eeee5555ffff6666aaaa7777", "2026-01-02T00:00:00Z"),
+        ),
+    )
+    report = totchef.up()
+
+    report.assert_shows("skills.zyplux/zyp-skills/totchef", "upgraded")
+    report.assert_shows("skills.zyplux/zyp-skills/mermaid", "installed")

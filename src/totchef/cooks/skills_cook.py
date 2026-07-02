@@ -217,11 +217,12 @@ class SkillsCook(VersionedCook):
         return read_skill_states()
 
     def list_reportable(self, requested: list[str], installed_after: dict[str, str]) -> list[str]:
-        """Split each fresh-repo placeholder into the per-skill keys its first `skills add` just landed; a placeholder whose add failed (or found nothing) stays, so the failure gets its row."""
+        """Row keys per declared repo: every skill installed after the sync — including one a re-add newly landed, which no requested key could name up front — plus any requested key nothing landed for (a fresh-repo placeholder whose add failed, a skill that vanished), so failures keep their rows."""
         reportable: list[str] = []
-        for name in requested:
-            discovered = sorted(key for key in installed_after if key.startswith(f"{name}/")) if name in self.repos else []
-            reportable += discovered or [name]
+        for repo in self.repos:
+            landed = sorted(key for key in installed_after if key.startswith(f"{repo}/"))
+            lost = [key for key in requested if key.startswith(f"{repo}/") and key not in installed_after]
+            reportable += (landed + lost) or [repo]
         return reportable
 
     def find_latest(self, names: list[str]) -> dict[str, str | None]:

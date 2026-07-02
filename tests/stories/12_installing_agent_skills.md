@@ -121,3 +121,9 @@ no check existed.
 anything else — say a real-directory copy left by an older install — is drift.
 A drifted skill plans as "would sync" even when upstream matches, and `up`
 re-adds its repo, letting the CLI replace the entry with the symlink.
+
+### 12.1.16 a re-add reports a newly landed skill as its own installed row
+
+A skill first appearing during a re-add of an already-installed repo (upstream
+added it) gets its own per-skill row, reporting "installed" — not just the sync
+log mention of 12.1.6.
