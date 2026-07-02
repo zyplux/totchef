@@ -1,5 +1,7 @@
 # Copilot review instructions
 
+The mandatory `ci` check runs the full quality gate on every push: ruff (`select = ["ALL"]`), pyrefly, vulture, knip, tsc, eslint, rumdl, and both test suites. Do not report syntax, typechecking and linting errors - leave these to the deterministic ci gate.
+
 `totchef` is a declarative, idempotent system-configuration tool. Python ≥3.14, `uv`-managed, gated by `just check` (ruff, pyrefly, vulture, pytest).
 
 Project conventions — do not flag these as defects:
